@@ -1,0 +1,3 @@
+username,password,email,last_name,first_name,middle_name
+t_math,pwd,tmath@example.com,Смирнов,Алексей,Петрович
+t_prog,pwd,tprog@example.com,Кузнецов,Дмитрий,Сергеевич
