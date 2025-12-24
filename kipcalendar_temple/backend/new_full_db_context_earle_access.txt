@@ -1,0 +1,250 @@
+-- Создание таблицы ролей
+CREATE TABLE IF NOT EXISTS roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL  -- e.g., 'student', 'teacher', 'admin'
+);
+
+-- Создание таблицы пользователей с нормализованными ролями (удалены roles TEXT)
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    email TEXT,
+    current_role TEXT NOT NULL,
+    logout_timestamp INTEGER
+);
+
+-- Many-to-many для ролей пользователей
+CREATE TABLE IF NOT EXISTS user_roles (
+    user_id INTEGER,
+    role_id INTEGER,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(role_id) REFERENCES roles(id) ON DELETE CASCADE,
+    PRIMARY KEY(user_id, role_id)
+);
+
+-- Таблица групп
+CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,  -- Добавлен UNIQUE
+    type TEXT,
+    curator_id INTEGER,
+    FOREIGN KEY(curator_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Many-to-many для пользователей и групп
+CREATE TABLE IF NOT EXISTS user_groups (
+    user_id INTEGER,
+    group_id INTEGER,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    PRIMARY KEY(user_id, group_id)
+);
+
+-- Таблица предметов
+CREATE TABLE IF NOT EXISTS subjects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    code TEXT UNIQUE,  -- Добавлен UNIQUE если code уникален
+    description TEXT
+);
+
+-- Таблица семестров с UNIX timestamps
+CREATE TABLE IF NOT EXISTS terms (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    start_date INTEGER NOT NULL,  -- UNIX timestamp
+    end_date INTEGER NOT NULL     -- UNIX timestamp
+);
+
+-- Таблица шаблонов расписания с UNIQUE constraint
+CREATE TABLE IF NOT EXISTS schedule_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    term_id INTEGER NOT NULL,
+    week_type TEXT NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY(term_id) REFERENCES terms(id) ON DELETE CASCADE,
+    UNIQUE (group_id, term_id, week_type, day_of_week)
+);
+
+-- Таблица уроков
+CREATE TABLE IF NOT EXISTS lessons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    template_id INTEGER NOT NULL,
+    subject_id INTEGER NOT NULL,
+    teacher_id INTEGER NOT NULL,
+    cabinet TEXT NOT NULL,
+    start_time TEXT NOT NULL,  -- Оставлено TEXT, но можно изменить на INTEGER если нужно
+    end_time TEXT NOT NULL,
+    homework TEXT,
+    materials TEXT,
+    FOREIGN KEY(template_id) REFERENCES schedule_templates(id) ON DELETE CASCADE,
+    FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Таблица фактических уроков с датой как UNIX timestamp
+CREATE TABLE IF NOT EXISTS actual_lessons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lesson_id INTEGER NOT NULL,
+    date INTEGER NOT NULL,  -- UNIX timestamp
+    comments TEXT,
+    FOREIGN KEY(lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+);
+
+-- Таблица оценок с CHECK constraints
+CREATE TABLE IF NOT EXISTS marks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actual_lesson_id INTEGER NOT NULL,
+    student_id INTEGER NOT NULL,
+    mark1 TEXT CHECK (mark1 IN ('1','2','3','4','5','A','B','C','D','F') OR mark1 IS NULL),
+    mark2 TEXT CHECK (mark2 IN ('1','2','3','4','5','A','B','C','D','F') OR mark2 IS NULL),
+    absence_type TEXT CHECK (absence_type IN ('absent', 'late', 'excused') OR absence_type IS NULL),
+    comment TEXT CHECK (LENGTH(comment) BETWEEN 1 AND 255),
+    timestamp INTEGER,
+    FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
+    FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Таблица событий с UNIX timestamps и добавленным group_id
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    date INTEGER NOT NULL,  -- UNIX timestamp for date
+    time INTEGER NOT NULL,  -- UNIX timestamp for time (or offset)
+    description TEXT,
+    event_type TEXT NOT NULL,
+    content TEXT,
+    end_date INTEGER,
+    end_time INTEGER,
+    privacy TEXT NOT NULL CHECK (privacy IN ('public', 'private', 'group')),
+    password_hash TEXT,
+    expiration_days INTEGER,
+    version INTEGER DEFAULT 0,
+    group_id INTEGER,  -- Добавлено для связи с группами
+    FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
+);
+
+-- Таблица повторяющихся событий (нормализация recurring_options)
+CREATE TABLE IF NOT EXISTS event_recurrences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    frequency TEXT NOT NULL,  -- e.g., 'daily', 'weekly'
+    interval INTEGER,
+    end_after INTEGER,  -- number of occurrences
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
+-- Таблица подзадач событий (нормализация subtasks)
+CREATE TABLE IF NOT EXISTS event_subtasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    due_date INTEGER,  -- UNIX timestamp
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE
+);
+
+-- Таблица shared events
+CREATE TABLE IF NOT EXISTS shared_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    accepted BOOLEAN,
+    reason TEXT,
+    forbid_edit BOOLEAN,
+    allow_comments BOOLEAN,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Таблица истории событий
+CREATE TABLE IF NOT EXISTS event_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    field TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    timestamp INTEGER,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Таблица комментариев
+CREATE TABLE IF NOT EXISTS comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    timestamp INTEGER,
+    FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Таблица уведомлений
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    timestamp INTEGER,
+    read BOOLEAN DEFAULT FALSE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Таблица аудит-логов
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    entity_id INTEGER,
+    old_value TEXT,
+    new_value TEXT,
+    timestamp INTEGER,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Дополнительная таблица для attachments (файлов)
+CREATE TABLE IF NOT EXISTS attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type TEXT NOT NULL,  -- 'lesson', 'event', 'mark'
+    entity_id INTEGER NOT NULL,
+    file_path TEXT NOT NULL,
+    file_type TEXT,
+    upload_timestamp INTEGER,
+    uploader_id INTEGER,
+    FOREIGN KEY(uploader_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Дополнительная таблица для посещаемости (если marks не хватает)
+CREATE TABLE IF NOT EXISTS attendances (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    actual_lesson_id INTEGER NOT NULL,
+    student_id INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('present', 'absent', 'late', 'excused')),
+    reason TEXT,
+    timestamp INTEGER,
+    FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
+    FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Дополнительная таблица для предпочтений пользователей
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id INTEGER PRIMARY KEY,
+    notification_email BOOLEAN DEFAULT TRUE,
+    theme TEXT DEFAULT 'light',
+    language TEXT DEFAULT 'en',
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Индексы для производительности
+CREATE INDEX IF NOT EXISTS idx_user_groups_user_id ON user_groups(user_id);
+CREATE INDEX IF NOT EXISTS idx_lessons_subject_id ON lessons(subject_id);
+CREATE INDEX IF NOT EXISTS idx_marks_student_id ON marks(student_id);
+CREATE INDEX IF NOT EXISTS idx_events_owner_id ON events(owner_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_attachments_entity ON attachments(entity_type, entity_id);
