@@ -1,0 +1,408 @@
+/* Schedule.css - Стили для страницы расписания, основанные на DemoStyles.css и Dashboard.css */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ========== CSS Переменные (из DemoStyles.css, адаптированные) ========== */
+:root {
+    /* Цветовая палитра */
+    --primary-color: #6366f1;
+    --primary-dark: #4f46e5;
+    --primary-light: #818cf8;
+    --secondary-color: #8b5cf6;
+    --secondary-dark: #7c3aed;
+    --accent-color: #10b981;
+    --accent-dark: #059669;
+    --accent-light: #34d399;
+
+    /* Фоны */
+    --background-light: #ffffff;
+    --background-gray: #f8fafc;
+    --surface: rgba(255, 255, 255, 0.95);
+
+    /* Текст */
+    --text-color: #1e293b;
+    --text-light: #ffffff;
+    --text-gray: #64748b;
+    --text-gray-light: #94a3b8;
+
+    /* Границы и скругления */
+    --border-radius: 16px;
+    --border-radius-sm: 8px;
+    --border-radius-lg: 24px;
+    --border-color: rgba(148, 163, 184, 0.2);
+
+    /* Тени */
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16);
+    --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.4);
+
+    /* Переходы и анимации */
+    --transition-base: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Шрифты */
+    --font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    --font-size-2xl: 1.5rem;
+
+    /* Градиенты */
+    --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    --gradient-accent: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+}
+
+/* ========== Основные стили (адаптировано из Dashboard.css) ========== */
+* {
+    font-family: var(--font-family);
+}
+
+/* ========== Контейнер страницы (из Dashboard.css) ========== */
+.dashboard-container {
+    max-width: 100%;
+    padding: 0;
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    min-height: 100vh;
+    display: flex;
+}
+
+/* ========== Левая часть: Расписание (адаптировано из .selected-day-events в Dashboard.css) ========== */
+.selected-day-events {
+    flex: 3;
+    padding: 24px;
+    background: rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-lg);
+    overflow-y: auto;
+    min-height: 600px;
+}
+
+.events-title {
+    color: var(--text-color);
+    font-weight: 600;
+    font-size: var(--font-size-2xl);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #e8eaed;
+}
+
+/* ========== Правая часть: Календарь (адаптировано из .main-calendar в Dashboard.css) ========== */
+.main-calendar {
+    flex: 1;
+    max-width: 300px;
+    padding: 24px;
+    background: rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-lg);
+}
+
+.small-calendar .react-calendar {
+    width: 100%;
+    border: none;
+    background: transparent;
+}
+
+.small-calendar .react-calendar__navigation {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.small-calendar .react-calendar__month-view__weekdays__weekday {
+    color: var(--text-gray);
+    font-weight: 500;
+    font-size: var(--font-size-sm);
+    text-align: center;
+    padding: 8px 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.small-calendar .react-calendar__tile {
+    height: 40px;
+    border: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-color);
+    position: relative;
+    padding: 8px;
+    font-size: var(--font-size-sm);
+    transition: background-color var(--transition-base);
+    cursor: pointer;
+    border-radius: var(--border-radius-sm);
+}
+
+.small-calendar .react-calendar__tile:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.small-calendar .react-calendar__tile--now {
+    border: 2px solid var(--primary-color);
+    background: rgba(232, 240, 254, 0.3);
+    font-weight: 600;
+}
+
+.small-calendar .react-calendar__tile--active {
+    background: var(--gradient-primary);
+    color: var(--text-light);
+    font-weight: 600;
+    box-shadow: var(--shadow-glow);
+}
+
+/* ========== Стили для расписания (новые, вдохновленные glassmorphism из Dashboard и анимациями из DemoStyles) ========== */
+.dnevnik {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.dnevnik-day {
+    background: rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-md);
+    padding: 16px;
+    transition: box-shadow var(--transition-base);
+}
+
+.dnevnik-day:hover {
+    box-shadow: var(--shadow-lg);
+}
+
+.dnevnik-day__header {
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.dnevnik-day__title {
+    font-size: var(--font-size-xl);
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.dnevnik-day__lessons {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.dnevnik-lesson {
+    display: flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: var(--border-radius-sm);
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    transition: background-color var(--transition-base), box-shadow var(--transition-base);
+    cursor: pointer;
+}
+
+.dnevnik-lesson:hover {
+    background: rgba(255, 255, 255, 0.2);
+    box-shadow: var(--shadow-sm);
+}
+
+.dnevnik-lesson__number {
+    width: 40px;
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--primary-color);
+    text-align: center;
+    margin-right: 16px;
+}
+
+.dnevnik-lesson__subject {
+    flex: 2;
+    display: flex;
+    flex-direction: column;
+}
+
+.dnevnik-lesson__time {
+    font-size: var(--font-size-sm);
+    color: var(--text-gray);
+    margin-bottom: 4px;
+}
+
+.js-rt_licey-dnevnik-subject {
+    font-size: var(--font-size-base);
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.dnevnik-lesson__cabinet {
+    font-size: var(--font-size-sm);
+    color: var(--text-gray-light);
+    margin-top: 4px;
+}
+
+.dnevnik-lesson__marks {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+    margin-left: 16px;
+}
+
+.dnevnik-mark {
+    display: flex;
+    align-items: center;
+}
+
+.dnevnik-mark__value {
+    padding: 4px 8px;
+    border-radius: var(--border-radius-sm);
+    font-weight: 600;
+    color: var(--text-light);
+    transition: background-color var(--transition-base);
+}
+
+.dnevnik-mark__value[data-value="5"] {
+    background: var(--accent-color);
+}
+
+.dnevnik-mark__value[data-value="4"] {
+    background: #f59e0b;
+}
+
+.dnevnik-mark__value[data-value="3"] {
+    background: #ef4444;
+}
+
+.dnevnik-mark__value[data-value="5/3"] {
+    background: linear-gradient(135deg, var(--accent-color) 50%, #ef4444 50%);
+}
+
+.dnevnik-mark__comment {
+    font-size: var(--font-size-sm);
+    color: var(--text-gray);
+    margin-left: 4px;
+}
+
+.dnevnik-lesson__hometask {
+    flex: 2;
+    margin-left: 16px;
+}
+
+.dnevnik-lesson__task {
+    font-size: var(--font-size-sm);
+    color: var(--text-color);
+    display: flex;
+    align-items: center;
+}
+
+.dnevnik-lesson-icon {
+    width: 16px;
+    height: 16px;
+    background: url('path-to-homework-icon') no-repeat center;
+    /* Замените на реальный иконку */
+    margin-right: 8px;
+}
+
+.dnevnik-lesson__additional {
+    flex: 1;
+    /* Пустой блок, можно добавить стили по необходимости */
+}
+
+.page-empty {
+    text-align: center;
+    color: var(--text-gray);
+    font-size: var(--font-size-base);
+    padding: 16px;
+}
+
+/* ========== Анимации (из DemoStyles.css) ========== */
+.dnevnik-lesson {
+    opacity: 0;
+    transform: translateY(10px);
+    animation: slideUp 0.6s ease-out forwards;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ========== Адаптивность (из Dashboard.css и DemoStyles.css) ========== */
+@media (max-width: 1024px) {
+    .dashboard-container {
+        flex-direction: column;
+    }
+
+    .selected-day-events {
+        flex: auto;
+        max-width: 100%;
+    }
+
+    .main-calendar {
+        max-width: 100%;
+        margin-top: 24px;
+    }
+}
+
+@media (max-width: 768px) {
+    .selected-day-events {
+        padding: 16px;
+    }
+
+    .dnevnik-lesson {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .dnevnik-lesson__number {
+        margin-right: 0;
+        margin-bottom: 4px;
+    }
+
+    .dnevnik-lesson__marks,
+    .dnevnik-lesson__hometask {
+        margin-left: 0;
+        margin-top: 8px;
+    }
+}
+
+@media (max-width: 480px) {
+    .events-title {
+        font-size: var(--font-size-xl);
+    }
+
+    .dnevnik-day__title {
+        font-size: var(--font-size-lg);
+    }
+}
+
+/* ========== Скроллбар (из Dashboard.css) ========== */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f3f4;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #dadce0;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #bdc1c6;
+}

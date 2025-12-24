@@ -1,12 +1,8 @@
 import React, { useState } from 'react';
 import Calendar from 'react-calendar'; // Импортируем react-calendar для отображения календаря, как в Dashboard.tsx
-import 'react-calendar/dist/Calendar.css'; // Базовые стили для календаря
 import { Typography, Container, Box } from '@mui/material'; // Импортируем компоненты из MUI для типографики и контейнеров, аналогично Dashboard.tsx
 import { format } from 'date-fns'; // Импортируем date-fns для форматирования дат, как в Dashboard.tsx
 import { ru } from 'date-fns/locale'; // Локаль для русского языка
-import './Dashboard.css'; // Импортируем стили из Dashboard.css для переиспользования элементов (адаптируем для расписания)
-import './DemoStyles.css'; // Импортируем стили из DemoStyles.css для общего дизайна страницы (градиенты, анимации и т.д.)
-
 // Определяем тип для урока (lesson), чтобы сделать код типизированным. Это включает все поля из примера eljur.ru:
 // - number: номер урока
 // - time: время начала и конца

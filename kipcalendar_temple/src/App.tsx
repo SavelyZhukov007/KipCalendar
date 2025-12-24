@@ -8,6 +8,7 @@ import Login from './components/Login';
 import Success from './components/Success';
 import Dashboard from './components/Dashboard';
 import Profile from './components/Profile';
+import SchedulePage from './components/Schedule';
 import './App.css';
 
 const theme = createTheme();
@@ -51,7 +52,8 @@ function App() {
             <Route path="/success" element={<Success />} />
             <Route path="/dashboard" element={<Dashboard />} /> {/* Календарь */}
             <Route path="/profile" element={<Profile />} /> {/* Новый профиль */}
-          </Routes>
+            <Route path="/schedule" element={<SchedulePage />} /> {/* Расписание */}
+            </Routes>
         </Router>
       </BackendContext.Provider>
     </ThemeProvider>
