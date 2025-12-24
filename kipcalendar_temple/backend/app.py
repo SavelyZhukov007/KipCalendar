@@ -43,75 +43,75 @@ def init_db():
         db = get_db()
         db.executescript(
             """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            roles TEXT NOT NULL,  -- JSON array
-            current_role TEXT NOT NULL,
-            logout_timestamp INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            type TEXT
-        );
-        CREATE TABLE IF NOT EXISTS user_groups (
-            user_id INTEGER,
-            group_id INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id),
-            FOREIGN KEY(group_id) REFERENCES groups(id)
-        );
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            date TEXT NOT NULL,
-            time TEXT NOT NULL,
-            description TEXT,
-            event_type TEXT NOT NULL,  -- plan or task
-            content TEXT,  -- for plan
-            end_date TEXT,
-            end_time TEXT,
-            recurring_options TEXT,  -- JSON
-            subtasks TEXT,  -- JSON for task
-            privacy TEXT NOT NULL,  -- public/private
-            password_hash TEXT,
-            expiration_days INTEGER,
-            version INTEGER DEFAULT 0,
-            FOREIGN KEY(owner_id) REFERENCES users(id)
-        );
-        CREATE TABLE IF NOT EXISTS shared_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            accepted BOOLEAN,
-            reason TEXT,
-            forbid_edit BOOLEAN,
-            allow_comments BOOLEAN,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-        CREATE TABLE IF NOT EXISTS event_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            field TEXT,
-            old_value TEXT,
-            new_value TEXT,
-            timestamp INTEGER,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-        CREATE TABLE IF NOT EXISTS comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            timestamp INTEGER,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                roles TEXT NOT NULL,  -- JSON array
+                current_role TEXT NOT NULL,
+                logout_timestamp INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT
+            );
+            CREATE TABLE IF NOT EXISTS user_groups (
+                user_id INTEGER,
+                group_id INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(group_id) REFERENCES groups(id)
+            );
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                date TEXT NOT NULL,
+                time TEXT NOT NULL,
+                description TEXT,
+                event_type TEXT NOT NULL,  -- plan or task
+                content TEXT,  -- for plan
+                end_date TEXT,
+                end_time TEXT,
+                recurring_options TEXT,  -- JSON
+                subtasks TEXT,  -- JSON for task
+                privacy TEXT NOT NULL,  -- public/private
+                password_hash TEXT,
+                expiration_days INTEGER,
+                version INTEGER DEFAULT 0,
+                FOREIGN KEY(owner_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS shared_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                accepted BOOLEAN,
+                reason TEXT,
+                forbid_edit BOOLEAN,
+                allow_comments BOOLEAN,
+                FOREIGN KEY(event_id) REFERENCES events(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS event_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                field TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                timestamp INTEGER,
+                FOREIGN KEY(event_id) REFERENCES events(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER,
+                FOREIGN KEY(event_id) REFERENCES events(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
         """
         )
         db.commit()
