@@ -6,6 +6,7 @@ import hashlib
 import jwt
 import datetime
 import time
+from flask_mail import Mail, Message
 from threading import Timer
 from flask_socketio import SocketIO, emit
 
@@ -17,6 +18,17 @@ CORS(
     allow_headers=["Content-Type", "Authorization"],
     supports_credentials=True,
 )
+app.config["MAIL_SERVER"] = (
+    "smtp.gmail.com"  # Пример для Gmail; замените на ваш SMTP-сервер
+)
+app.config["MAIL_PORT"] = 587  # Или 465 для SSL
+app.config["MAIL_USE_TLS"] = True  # Или MAIL_USE_SSL = True
+app.config["MAIL_USERNAME"] = "savely.zhukov.1583@gmail.com"  # Ваш email
+app.config["MAIL_PASSWORD"] = (
+    "abrmpqybsyvsqbti"  # App password для Gmail (не основной пароль)
+)
+app.config["MAIL_DEFAULT_SENDER"] = "savely.zhukov.1583@gmail.com"  # От кого отправлять
+mail = Mail(app)  # Инициализация Flask-Mail
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 SECRET_KEY = "your_secret_key_change_me"
@@ -31,6 +43,19 @@ def get_db():
     return db
 
 
+def send_email(to_email, subject, body, html_body=None):
+    msg = Message(subject, recipients=[to_email])
+    msg.body = body  # Текстовый вариант
+    if html_body:
+        msg.html = html_body  # HTML-вариант для красивого оформления
+    try:
+        mail.send(msg)
+        return True
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        return False
+
+
 @app.teardown_appcontext
 def close_connection(exception):
     db = getattr(g, "_database", None)
@@ -43,75 +68,101 @@ def init_db():
         db = get_db()
         db.executescript(
             """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            roles TEXT NOT NULL,  -- JSON array
-            current_role TEXT NOT NULL,
-            logout_timestamp INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            type TEXT
-        );
-        CREATE TABLE IF NOT EXISTS user_groups (
-            user_id INTEGER,
-            group_id INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id),
-            FOREIGN KEY(group_id) REFERENCES groups(id)
-        );
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            date TEXT NOT NULL,
-            time TEXT NOT NULL,
-            description TEXT,
-            event_type TEXT NOT NULL,  -- plan or task
-            content TEXT,  -- for plan
-            end_date TEXT,
-            end_time TEXT,
-            recurring_options TEXT,  -- JSON
-            subtasks TEXT,  -- JSON for task
-            privacy TEXT NOT NULL,  -- public/private
-            password_hash TEXT,
-            expiration_days INTEGER,
-            version INTEGER DEFAULT 0,
-            FOREIGN KEY(owner_id) REFERENCES users(id)
-        );
-        CREATE TABLE IF NOT EXISTS shared_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            accepted BOOLEAN,
-            reason TEXT,
-            forbid_edit BOOLEAN,
-            allow_comments BOOLEAN,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-        CREATE TABLE IF NOT EXISTS event_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            field TEXT,
-            old_value TEXT,
-            new_value TEXT,
-            timestamp INTEGER,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-        CREATE TABLE IF NOT EXISTS comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            timestamp INTEGER,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email TEXT,  -- Для уведомлений
+                roles TEXT NOT NULL,  -- JSON array, e.g. ["student", "teacher"]
+                current_role TEXT NOT NULL,
+                logout_timestamp INTEGER
+            );
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,  -- e.g. "10A класс"
+                type TEXT,  -- e.g. "school_class", "university_group"
+                curator_id INTEGER,  -- Ссылка на учителя-куратора
+                FOREIGN KEY(curator_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS user_groups (
+                user_id INTEGER,
+                group_id INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(group_id) REFERENCES groups(id),
+                PRIMARY KEY(user_id, group_id)
+            );
+            CREATE TABLE IF NOT EXISTS subjects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,  -- Название предмета, e.g. "Математика"
+                code TEXT,  -- Короткий код, e.g. "MATH"
+                description TEXT
+            );
+            CREATE TABLE IF NOT EXISTS terms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,  -- e.g. "1 семестр"
+                start_date TEXT NOT NULL,  -- YYYY-MM-DD
+                end_date TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS schedule_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                term_id INTEGER NOT NULL,
+                week_type TEXT NOT NULL,  -- "even" or "odd" for четная/нечетная неделя
+                day_of_week INTEGER NOT NULL,  -- 0=Воскресенье, 1=Понедельник, ..., 6=Суббота (0-6 дней в неделю)
+                FOREIGN KEY(group_id) REFERENCES groups(id),
+                FOREIGN KEY(term_id) REFERENCES terms(id)
+            );
+            CREATE TABLE IF NOT EXISTS lessons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL,
+                subject_id INTEGER NOT NULL,
+                teacher_id INTEGER NOT NULL,  -- Имя преподавателя через ссылку на user
+                cabinet TEXT NOT NULL,  -- Номер кабинета
+                start_time TEXT NOT NULL,  -- HH:MM
+                end_time TEXT NOT NULL,
+                homework TEXT,  -- Домашнее задание
+                materials TEXT,  -- JSON с файлами/ссылками (дополнение)
+                FOREIGN KEY(template_id) REFERENCES schedule_templates(id),
+                FOREIGN KEY(subject_id) REFERENCES subjects(id),
+                FOREIGN KEY(teacher_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS actual_lessons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                lesson_id INTEGER NOT NULL,
+                date TEXT NOT NULL,  -- Конкретная дата занятия (YYYY-MM-DD)
+                comments TEXT,  -- Общие комментарии к уроку (до 255 символов)
+                FOREIGN KEY(lesson_id) REFERENCES lessons(id)
+            );
+            CREATE TABLE IF NOT EXISTS marks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actual_lesson_id INTEGER NOT NULL,
+                student_id INTEGER NOT NULL,
+                mark1 TEXT,  -- Первая оценка (число или NULL)
+                mark2 TEXT,  -- Вторая оценка (число или NULL)
+                absence_type TEXT,  -- "Н" (неявка), "НБ" (уважительная), NULL если присутствовал
+                comment TEXT CHECK (LENGTH(comment) BETWEEN 1 AND 255),  -- Комментарий (1-255 символов)
+                timestamp INTEGER,
+                FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
+                FOREIGN KEY(student_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER,
+                read BOOLEAN DEFAULT FALSE,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                action TEXT NOT NULL,  -- e.g. "update_mark"
+                entity_id INTEGER,
+                old_value TEXT,
+                new_value TEXT,
+                timestamp INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
         """
         )
         db.commit()
@@ -165,6 +216,9 @@ def register():
     data = request.json
     username = data.get("username")
     password = data.get("password")
+    email = data.get(
+        "email", ""
+    )  # Добавьте это: извлекаем email из JSON, дефолт — пустая строка (или None, если хотите NULL в БД)
     role = data.get("role", "student")
     if not username or not password:
         return jsonify({"error": "Missing fields"}), 400
@@ -175,8 +229,8 @@ def register():
         return jsonify({"error": "Username exists"}), 400
     hashed = hash_password(password)
     cur.execute(
-        "INSERT INTO users (username, password_hash, roles, current_role) VALUES (?, ?, ?, ?)",
-        (username, hashed, json.dumps([role]), role),
+        "INSERT INTO users (username, password_hash, email, roles, current_role) VALUES (?, ?, ?, ?, ?)",
+        (username, hashed, email, json.dumps([role]), role),
     )
     db.commit()
     return jsonify({"message": "Registered"})
@@ -723,13 +777,18 @@ def check_expired_users():
             (now,),
         )
         for row in cur.fetchall():
-            cur.execute("DELETE FROM events WHERE owner_id = ?", (row["id"],))
+            cur.execute("DELETE FROM marks WHERE student_id = ?", (row["id"],))
+            cur.execute("DELETE FROM notifications WHERE user_id = ?", (row["id"],))
+            cur.execute("DELETE FROM audit_logs WHERE user_id = ?", (row["id"],))
             cur.execute(
-                "DELETE FROM shared_events WHERE user_id = ? OR event_id IN (SELECT id FROM events WHERE owner_id = ?)",
-                (row["id"], row["id"]),
+                "DELETE FROM actual_lessons WHERE lesson_id IN (SELECT id FROM lessons WHERE teacher_id = ?)",
+                (row["id"],),
             )
-            cur.execute("DELETE FROM event_history WHERE user_id = ?", (row["id"],))
-            cur.execute("DELETE FROM comments WHERE user_id = ?", (row["id"],))
+            cur.execute("DELETE FROM lessons WHERE teacher_id = ?", (row["id"],))
+            cur.execute("DELETE FROM user_groups WHERE user_id = ?", (row["id"],))
+            cur.execute(
+                "DELETE FROM groups WHERE curator_id = ?", (row["id"],)
+            )  # Если куратор
             cur.execute("DELETE FROM users WHERE id = ?", (row["id"],))
         db.commit()
     Timer(86400, check_expired_users).start()
