@@ -1,4 +1,5 @@
-import React, { useEffect, useState, createContext, useContext } from 'react';
+// App.tsx
+import React, { useEffect, useState, createContext, useContext, ReactElement } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -18,6 +19,11 @@ type BackendContextType = {
 };
 
 const BackendContext = createContext<BackendContextType | undefined>(undefined);
+
+const PrivateRoute = ({ children }: { children: ReactElement }) => {
+  const token = localStorage.getItem('token');
+  return token ? children : <Navigate to="/login" />;
+};
 
 function App() {
   const [isBackendConnected, setIsBackendConnected] = useState(false);
@@ -49,11 +55,11 @@ function App() {
             <Route path="/" element={<Home />} /> {/* Выбор вход/регистрация */}
             <Route path="/register" element={<Register />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/success" element={<Success />} />
-            <Route path="/dashboard" element={<Dashboard />} /> {/* Календарь */}
-            <Route path="/profile" element={<Profile />} /> {/* Новый профиль */}
-            <Route path="/schedule" element={<SchedulePage />} /> {/* Расписание */}
-            </Routes>
+            <Route path="/success" element={<PrivateRoute><Success /></PrivateRoute>} />
+            <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} /> {/* Календарь */}
+            <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} /> {/* Новый профиль */}
+            <Route path="/schedule" element={<PrivateRoute><SchedulePage /></PrivateRoute>} /> {/* Расписание */}
+          </Routes>
         </Router>
       </BackendContext.Provider>
     </ThemeProvider>
