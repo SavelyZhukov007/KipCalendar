@@ -13,7 +13,7 @@ from flask_socketio import SocketIO, emit
 app = Flask(__name__)
 CORS(
     app,
-    origins=["http://localhost:3000"],
+    origins=["*"],
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
     supports_credentials=True,
@@ -72,16 +72,16 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
-                email TEXT,  -- Для уведомлений
-                roles TEXT NOT NULL,  -- JSON array, e.g. ["student", "teacher"]
+                email TEXT,
+                roles TEXT NOT NULL,
                 current_role TEXT NOT NULL,
                 logout_timestamp INTEGER
             );
             CREATE TABLE IF NOT EXISTS groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,  -- e.g. "10A класс"
-                type TEXT,  -- e.g. "school_class", "university_group"
-                curator_id INTEGER,  -- Ссылка на учителя-куратора
+                name TEXT NOT NULL,
+                type TEXT,
+                curator_id INTEGER,
                 FOREIGN KEY(curator_id) REFERENCES users(id)
             );
             CREATE TABLE IF NOT EXISTS user_groups (
@@ -93,22 +93,22 @@ def init_db():
             );
             CREATE TABLE IF NOT EXISTS subjects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,  -- Название предмета, e.g. "Математика"
-                code TEXT,  -- Короткий код, e.g. "MATH"
+                name TEXT NOT NULL,
+                code TEXT,
                 description TEXT
             );
             CREATE TABLE IF NOT EXISTS terms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,  -- e.g. "1 семестр"
-                start_date TEXT NOT NULL,  -- YYYY-MM-DD
+                name TEXT NOT NULL,
+                start_date TEXT NOT NULL,
                 end_date TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS schedule_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id INTEGER NOT NULL,
                 term_id INTEGER NOT NULL,
-                week_type TEXT NOT NULL,  -- "even" or "odd" for четная/нечетная неделя
-                day_of_week INTEGER NOT NULL,  -- 0=Воскресенье, 1=Понедельник, ..., 6=Суббота (0-6 дней в неделю)
+                week_type TEXT NOT NULL,
+                day_of_week INTEGER NOT NULL,
                 FOREIGN KEY(group_id) REFERENCES groups(id),
                 FOREIGN KEY(term_id) REFERENCES terms(id)
             );
@@ -116,12 +116,12 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 template_id INTEGER NOT NULL,
                 subject_id INTEGER NOT NULL,
-                teacher_id INTEGER NOT NULL,  -- Имя преподавателя через ссылку на user
-                cabinet TEXT NOT NULL,  -- Номер кабинета
-                start_time TEXT NOT NULL,  -- HH:MM
+                teacher_id INTEGER NOT NULL,
+                cabinet TEXT NOT NULL,
+                start_time TEXT NOT NULL,
                 end_time TEXT NOT NULL,
-                homework TEXT,  -- Домашнее задание
-                materials TEXT,  -- JSON с файлами/ссылками (дополнение)
+                homework TEXT,
+                materials TEXT,
                 FOREIGN KEY(template_id) REFERENCES schedule_templates(id),
                 FOREIGN KEY(subject_id) REFERENCES subjects(id),
                 FOREIGN KEY(teacher_id) REFERENCES users(id)
@@ -129,21 +129,72 @@ def init_db():
             CREATE TABLE IF NOT EXISTS actual_lessons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 lesson_id INTEGER NOT NULL,
-                date TEXT NOT NULL,  -- Конкретная дата занятия (YYYY-MM-DD)
-                comments TEXT,  -- Общие комментарии к уроку (до 255 символов)
+                date TEXT NOT NULL,
+                comments TEXT,
                 FOREIGN KEY(lesson_id) REFERENCES lessons(id)
             );
             CREATE TABLE IF NOT EXISTS marks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 actual_lesson_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
-                mark1 TEXT,  -- Первая оценка (число или NULL)
-                mark2 TEXT,  -- Вторая оценка (число или NULL)
-                absence_type TEXT,  -- "Н" (неявка), "НБ" (уважительная), NULL если присутствовал
-                comment TEXT CHECK (LENGTH(comment) BETWEEN 1 AND 255),  -- Комментарий (1-255 символов)
+                mark1 TEXT,
+                mark2 TEXT,
+                absence_type TEXT,
+                comment TEXT CHECK (LENGTH(comment) BETWEEN 1 AND 255),
                 timestamp INTEGER,
                 FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
                 FOREIGN KEY(student_id) REFERENCES users(id)
+            );
+            -- ДОБАВЬТЕ ЭТИ ТАБЛИЦЫ ОБРАТНО:
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                date TEXT NOT NULL,
+                time TEXT NOT NULL,
+                description TEXT,
+                event_type TEXT NOT NULL,
+                content TEXT,
+                end_date TEXT,
+                end_time TEXT,
+                recurring_options TEXT,
+                subtasks TEXT,
+                privacy TEXT NOT NULL,
+                password_hash TEXT,
+                expiration_days INTEGER,
+                version INTEGER DEFAULT 0,
+                FOREIGN KEY(owner_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS shared_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                accepted BOOLEAN,
+                reason TEXT,
+                forbid_edit BOOLEAN,
+                allow_comments BOOLEAN,
+                FOREIGN KEY(event_id) REFERENCES events(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS event_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                field TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                timestamp INTEGER,
+                FOREIGN KEY(event_id) REFERENCES events(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER,
+                FOREIGN KEY(event_id) REFERENCES events(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
             );
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,7 +207,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                action TEXT NOT NULL,  -- e.g. "update_mark"
+                action TEXT NOT NULL,
                 entity_id INTEGER,
                 old_value TEXT,
                 new_value TEXT,
@@ -166,13 +217,6 @@ def init_db():
         """
         )
         db.commit()
-        # Проверяем наличие колонки email в таблице users (теперь после создания)
-        cur = db.cursor()
-        cur.execute("PRAGMA table_info(users)")
-        columns = [row[1] for row in cur.fetchall()]
-        if "email" not in columns:
-            cur.execute("ALTER TABLE users ADD COLUMN email TEXT")
-            db.commit()
 
 
 init_db()
@@ -211,15 +255,15 @@ def get_user_role(user_id):
 
 @app.route("/health", methods=["GET", "OPTIONS"])
 def health():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     return jsonify({"status": "ok"})
 
 
 @app.route("/register", methods=["POST", "OPTIONS"])
 def register():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     data = request.json
     username = data.get("username")
     password = data.get("password")
@@ -240,13 +284,29 @@ def register():
         (username, hashed, email, json.dumps([role]), role),
     )
     db.commit()
+    if email:
+        subject = "Добро пожаловать в KipCalendar!"
+        body = f"Здравствуйте, {username}!\n\nВы успешно зарегистрировались в KipCalendar.\nВаша роль: {role}\n\nСпасибо за регистрацию!"
+        html_body = f"""
+        <html>
+            <body style="font-family: Arial, sans-serif;">
+                <h2 style="color: #6366f1;">Добро пожаловать в KipCalendar!</h2>
+                <p>Здравствуйте, <strong>{username}</strong>!</p>
+                <p>Вы успешно зарегистрировались в системе.</p>
+                <p>Ваша роль: <strong>{role}</strong></p>
+                <p>Спасибо за регистрацию!</p>
+            </body>
+        </html>
+        """
+        send_email(email, subject, body, html_body)
+
     return jsonify({"message": "Registered"})
 
 
 @app.route("/login", methods=["POST", "OPTIONS"])
 def login():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     data = request.json
     username = data.get("username")
     password = data.get("password")
@@ -273,8 +333,8 @@ def login():
 
 @app.route("/logout", methods=["POST", "OPTIONS"])
 def logout():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -324,8 +384,8 @@ def switch_role():
 
 @app.route("/events", methods=["GET", "OPTIONS"])
 def get_events():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -357,8 +417,8 @@ def get_events():
 
 @app.route("/api/events/create-plan", methods=["POST", "OPTIONS"])
 def create_plan():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -404,8 +464,8 @@ def create_plan():
 
 @app.route("/api/events/create-task", methods=["POST", "OPTIONS"])
 def create_task():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -458,8 +518,8 @@ def create_task():
 
 @app.route("/event/<username>/<privacy>/<name>", methods=["GET", "OPTIONS"])
 def view_event(username, privacy, name):
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     event_id = int(name)
     db = get_db()
     cur = db.cursor()
@@ -521,8 +581,8 @@ def view_event(username, privacy, name):
 
 @app.route("/event/<privacy>/<name>", methods=["PUT", "DELETE", "OPTIONS"])
 def modify_event(privacy, name):
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -611,8 +671,8 @@ def modify_event(privacy, name):
 
 @app.route("/api/events/<int:event_id>/share", methods=["POST", "OPTIONS"])
 def share_event(event_id):
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -639,8 +699,8 @@ def share_event(event_id):
 
 @app.route("/api/shares/pending", methods=["GET", "OPTIONS"])
 def pending_shares():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -662,8 +722,8 @@ def pending_shares():
 
 @app.route("/api/shares/accept/<int:id>", methods=["POST", "OPTIONS"])
 def accept_share(id):
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -680,8 +740,8 @@ def accept_share(id):
 
 @app.route("/api/shares/decline/<int:id>", methods=["POST", "OPTIONS"])
 def decline_share(id):
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -708,25 +768,22 @@ def decline_share(id):
 
 @app.route("/api/users/get-by-role", methods=["GET", "OPTIONS"])
 def get_users_by_role():
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
     role = request.args.get("role")
     db = get_db()
     cur = db.cursor()
-    cur.execute(
-        "SELECT id, username FROM users WHERE JSON_CONTAINS(roles, ?) ",
-        (json.dumps(role),),
-    )
+    cur.execute("SELECT id, username FROM users WHERE roles LIKE ?", (f'%"{role}"%',))
     return jsonify([dict(row) for row in cur.fetchall()])
 
 
 @app.route("/api/events/<int:event_id>/comments", methods=["GET", "POST", "OPTIONS"])
 def event_comments(event_id):
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -760,8 +817,8 @@ def event_comments(event_id):
 
 @app.route("/api/events/<int:event_id>/history", methods=["GET", "OPTIONS"])
 def event_history(event_id):
-    # if request.method == "OPTIONS":
-    #     return "", 200
+    if request.method == "OPTIONS":
+        return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -772,6 +829,60 @@ def event_history(event_id):
         (event_id,),
     )
     return jsonify([dict(row) for row in cur.fetchall()])
+
+
+@app.route("/api/marks/add", methods=["POST", "OPTIONS"])
+def add_mark():
+    if request.method == "OPTIONS":
+        return "", 200
+    username = get_auth_user()
+    if not username:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    actual_lesson_id = data.get("actual_lesson_id")
+    student_id = data.get("student_id")
+    mark1 = data.get("mark1")
+    mark2 = data.get("mark2")
+    absence_type = data.get("absence_type")
+    comment = data.get("comment")
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Добавляем оценку
+    cur.execute(
+        """INSERT INTO marks (actual_lesson_id, student_id, mark1, mark2, absence_type, comment, timestamp) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            actual_lesson_id,
+            student_id,
+            mark1,
+            mark2,
+            absence_type,
+            comment,
+            int(time.time()),
+        ),
+    )
+    db.commit()
+
+    # Получаем email студента и отправляем уведомление
+    cur.execute("SELECT email, username FROM users WHERE id = ?", (student_id,))
+    student = cur.fetchone()
+
+    if student and student["email"]:
+        subject = "Новая оценка в KipCalendar"
+        body = f"Здравствуйте, {student['username']}!\n\nВам выставлена новая оценка:\n"
+        if mark1:
+            body += f"Оценка 1: {mark1}\n"
+        if mark2:
+            body += f"Оценка 2: {mark2}\n"
+        if comment:
+            body += f"Комментарий: {comment}\n"
+
+        send_email(student["email"], subject, body)
+
+    return jsonify({"message": "Mark added"})
 
 
 def check_expired_users():
