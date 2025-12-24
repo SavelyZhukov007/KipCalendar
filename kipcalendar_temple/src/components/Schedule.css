@@ -1,7 +1,8 @@
 /* Schedule.css - Обновленные стили для страницы расписания, с улучшенной логикой и видом для электронного журнала */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css'); /* Добавляем Font Awesome для иконок */
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css');
+/* Добавляем Font Awesome для иконок */
 
 /* ========== CSS Переменные (из DemoStyles.css, адаптированные) ========== */
 :root {
@@ -29,7 +30,8 @@
     --text-gray-light: #94a3b8;
 
     /* Границы и скругления */
-    --border-radius: 8px; /* Уменьшили для более строгого вида журнала */
+    --border-radius: 8px;
+    /* Уменьшили для более строгого вида журнала */
     --border-radius-sm: 4px;
     --border-radius-lg: 12px;
     --border-color: rgba(148, 163, 184, 0.2);
@@ -89,7 +91,7 @@
     border-bottom: 1px solid var(--border-color);
 }
 
-/* ========== Правая часть: Календарь ========== */
+/* ========== Правая часть: Календарь (исправлено выравнивание) ========== */
 .main-calendar {
     flex: 1;
     max-width: 320px;
@@ -98,19 +100,68 @@
     border-radius: var(--border-radius-lg);
     box-shadow: var(--shadow-md);
     margin: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    /* Центрируем содержимое */
+    justify-content: flex-start;
+    /* Выравниваем сверху */
 }
 
 .small-calendar .react-calendar {
     width: 100%;
+    max-width: 280px;
+    /* Ограничили ширину для лучшего вида */
     border: none;
     background: transparent;
 }
 
+/* ========== Навигация календаря (обновлено: нормальный вид без закруглений) ========== */
 .small-calendar .react-calendar__navigation {
     display: flex;
     justify-content: space-between;
+    align-items: center;
+    width: 100%;
     margin-bottom: 12px;
     color: var(--text-color);
+    height: 32px;
+    /* Фиксированная высота для нормального вида */
+}
+
+.small-calendar .react-calendar__navigation button {
+    background: var(--background-gray);
+    border: 1px solid var(--border-color);
+    border-radius: 0;
+    /* Без закруглений */
+    color: var(--text-color);
+    font-size: var(--font-size-base);
+    padding: 4px 8px;
+    min-width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color var(--transition-base), border-color var(--transition-base);
+}
+
+.small-calendar .react-calendar__navigation button:hover {
+    background: var(--primary-light);
+    border-color: var(--primary-color);
+    color: var(--text-light);
+}
+
+.small-calendar .react-calendar__navigation button:disabled {
+    background: var(--background-gray);
+    color: var(--text-gray-light);
+    cursor: not-allowed;
+}
+
+.small-calendar .react-calendar__navigation .react-calendar__navigation__label {
+    font-weight: 600;
+    font-size: var(--font-size-base);
+    background: transparent;
+    border: none;
+    cursor: pointer;
 }
 
 .small-calendar .react-calendar__month-view__weekdays__weekday {
@@ -129,8 +180,11 @@
     font-size: var(--font-size-sm);
     transition: background-color var(--transition-base);
     cursor: pointer;
-    border-radius: var(--border-radius-sm);
+    border-radius: 0;
+    /* Без закруглений для плиток */
     text-align: center;
+    border: 1px solid var(--border-color);
+    /* Добавили границу для сетки */
 }
 
 .small-calendar .react-calendar__tile:hover {
@@ -150,7 +204,7 @@
     box-shadow: var(--shadow-sm);
 }
 
-/* ========== Стили для расписания (обновлено: табличный вид с grid для лучшей читаемости) ========== */
+/* ========== Стили для расписания ========== */
 .dnevnik {
     display: flex;
     flex-direction: column;
@@ -190,7 +244,8 @@
 
 .dnevnik-lesson {
     display: grid;
-    grid-template-columns: 40px 120px 1fr 80px 80px 1fr; /* Колонки: номер, время, предмет+кабинет, оценки, комментарий, домашка */
+    grid-template-columns: 40px 120px 1fr 80px 80px 1fr;
+    /* Колонки: номер, время, предмет+кабинет, оценки, комментарий, домашка */
     align-items: center;
     background: var(--background-gray);
     border-radius: var(--border-radius-sm);
@@ -211,7 +266,8 @@
 }
 
 .dnevnik-lesson__subject {
-    grid-column: span 2; /* Объединяем с кабинетом */
+    grid-column: span 2;
+    /* Объединяем с кабинетом */
     display: flex;
     flex-direction: column;
 }
@@ -273,7 +329,8 @@
     font-size: var(--font-size-sm);
     color: var(--text-gray);
     margin-left: 4px;
-    grid-column: span 1; /* Отдельная колонка для комментария */
+    grid-column: span 1;
+    /* Отдельная колонка для комментария */
 }
 
 .dnevnik-lesson__hometask {
@@ -284,12 +341,15 @@
 }
 
 .dnevnik-lesson-icon {
-    font-family: "Font Awesome 5 Free"; /* Используем Font Awesome */
-    content: "\f02d"; /* Иконка книги (fa-book) */
+    font-family: "Font Awesome 5 Free";
+    /* Используем Font Awesome */
+    content: "\f02d";
+    /* Иконка книги (fa-book) */
     margin-right: 6px;
     color: var(--primary-color);
     font-size: var(--font-size-base);
-    font-weight: 900; /* Для solid стиля */
+    font-weight: 900;
+    /* Для solid стиля */
 }
 
 .dnevnik-lesson__additional {
@@ -318,6 +378,7 @@
         opacity: 0;
         transform: translateY(10px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -337,13 +398,15 @@
 
     .main-calendar {
         max-width: 100%;
-        order: -1; /* Календарь сверху на мобильных */
+        order: -1;
+        /* Календарь сверху на мобильных */
     }
 }
 
 @media (max-width: 768px) {
     .dnevnik-lesson {
-        grid-template-columns: 40px 1fr; /* Упрощаем: номер + остальное в колонку */
+        grid-template-columns: 40px 1fr;
+        /* Упрощаем: номер + остальное в колонку */
         gap: 4px;
     }
 

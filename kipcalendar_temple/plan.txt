@@ -1,3 +1,9 @@
+сейчас сделаем так
+напишем ScheduleCreate.py, который будет иметь GUI для создания расписания, со всеми данными, он будет их генерировать в виде json, сохранять рядом с собой папку Schedules, в ней папку {OrgName} а в ней файл schedule_{номер группы}.json, затем будет приводить их в такой вид, чтобы сохранить их в БД
+вот код на питоне:
+"app_test.py
+
+```python
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import sqlite3
@@ -1024,3 +1030,7 @@ if __name__ == "__main__":
 kipcalendar_temple/backend/appvenv/Scripts/Activate.ps1
 py kipcalendar_temple/backend/app_test.py
 """
+```
+
+"
+нужно внести такие изменения, чтобы всё работало корректно
