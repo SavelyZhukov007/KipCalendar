@@ -1,0 +1,807 @@
+/* ============================================
+   KipCalendar - Единая система стилей
+   Современный адаптивный дизайн с анимациями
+   ============================================ */
+
+/* ========== CSS Переменные ========== */
+:root {
+    /* Цветовая палитра */
+    --primary-color: #6366f1;
+    --primary-dark: #4f46e5;
+    --primary-light: #818cf8;
+    --secondary-color: #8b5cf6;
+    --secondary-dark: #7c3aed;
+    --accent-color: #10b981;
+    --accent-dark: #059669;
+    --accent-light: #34d399;
+    
+    /* Фоны */
+    --background-light: #ffffff;
+    --background-dark: #0f172a;
+    --background-gray: #f8fafc;
+    --background-gray-dark: #1e293b;
+    --surface: rgba(255, 255, 255, 0.95);
+    --surface-dark: rgba(30, 41, 59, 0.95);
+    
+    /* Текст */
+    --text-color: #1e293b;
+    --text-light: #ffffff;
+    --text-gray: #64748b;
+    --text-gray-light: #94a3b8;
+    
+    /* Границы и скругления */
+    --border-radius: 16px;
+    --border-radius-sm: 8px;
+    --border-radius-lg: 24px;
+    --border-color: rgba(148, 163, 184, 0.2);
+    
+    /* Тени */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16);
+    --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.2);
+    --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.4);
+    
+    /* Переходы и анимации */
+    --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    
+    /* Шрифты */
+    --font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    --font-size-2xl: 1.5rem;
+    --font-size-3xl: 2rem;
+    --font-size-4xl: 2.5rem;
+    
+    /* Градиенты */
+    --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+    --gradient-secondary: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    --gradient-accent: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+    --gradient-dark: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    --gradient-light: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    
+    /* Z-index слои */
+    --z-base: 1;
+    --z-dropdown: 100;
+    --z-sticky: 200;
+    --z-modal: 300;
+    --z-tooltip: 400;
+}
+
+/* ========== Базовые стили ========== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-base);
+    color: var(--text-color);
+    background: var(--background-light);
+    line-height: 1.6;
+    overflow-x: hidden;
+    min-height: 100vh;
+}
+
+/* ========== Контейнеры ========== */
+#container {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+    background: #ffffff;
+    animation: containerReveal 1.5s ease-out forwards;
+}
+
+@keyframes containerReveal {
+    0% {
+        background: #ffffff;
+    }
+    100% {
+        background: var(--gradient-light);
+    }
+}
+
+/* Вертикальная полоска в центре экрана */
+#container::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scaleY(0);
+    width: 2px;
+    height: 0;
+    background: linear-gradient(180deg, 
+        #6366f1 0%, 
+        #8b5cf6 25%, 
+        #ec4899 50%, 
+        #f59e0b 75%, 
+        #10b981 100%);
+    z-index: 1000;
+    animation: verticalStripeExpand 0.6s cubic-bezier(0.4, 0, 0.2, 1) 0.3s forwards;
+    box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+}
+
+@keyframes verticalStripeExpand {
+    0% {
+        transform: translate(-50%, -50%) scaleY(0);
+        height: 0;
+        opacity: 0;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        transform: translate(-50%, -50%) scaleY(1);
+        height: 200px;
+        opacity: 1;
+    }
+}
+
+#left {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: var(--gradient-light);
+    transition: all var(--transition-slow) cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    z-index: var(--z-base);
+    padding: 2rem;
+    overflow: hidden;
+    opacity: 0;
+    animation: fadeInLeft 1s ease-out 1s forwards;
+}
+
+@keyframes fadeInLeft {
+    0% {
+        opacity: 0;
+        transform: translateX(-30px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+#left::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    right: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.1) 0%, transparent 70%);
+    animation: rotate 20s linear infinite;
+    pointer-events: none;
+}
+
+@keyframes rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+#left h1 {
+    font-size: var(--font-size-4xl);
+    font-weight: 800;
+    margin-bottom: 2rem;
+    letter-spacing: -0.02em;
+    position: relative;
+    z-index: 2;
+    overflow: visible;
+}
+
+#left h1::after {
+    content: '';
+    position: absolute;
+    bottom: -12px;
+    left: 50%;
+    transform: translateX(-50%) scaleX(0);
+    width: 80%;
+    height: 4px;
+    background: var(--gradient-primary);
+    border-radius: 2px;
+    transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-glow);
+}
+
+body.animate #left h1::after {
+    transform: translateX(-50%) scaleX(1);
+    animation: underlineExpand 0.8s cubic-bezier(0.4, 0, 0.2, 1) 2.5s forwards;
+}
+
+@keyframes underlineExpand {
+    0% {
+        transform: translateX(-50%) scaleX(0);
+    }
+    100% {
+        transform: translateX(-50%) scaleX(1);
+    }
+}
+
+#left .char {
+    display: inline-block;
+    position: relative;
+    z-index: 2;
+    color: #1a73e8;
+    opacity: 0;
+    mask-image: linear-gradient(to right, black 0%, black 0%, transparent 0%);
+    -webkit-mask-image: linear-gradient(to right, black 0%, black 0%, transparent 0%);
+    animation: drawLetter 1s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    animation-delay: calc(1.2s + 0.08s * var(--char-index));
+}
+
+/* Анимация рисования букв (как на Apple) */
+@keyframes drawLetter {
+    0% {
+        opacity: 0.2;
+        mask-image: linear-gradient(to right, black 0%, black 0%, transparent 0%);
+        -webkit-mask-image: linear-gradient(to right, black 0%, black 0%, transparent 0%);
+        filter: blur(3px);
+    }
+    30% {
+        opacity: 0.5;
+        filter: blur(1px);
+    }
+    60% {
+        opacity: 0.8;
+        filter: blur(0.5px);
+    }
+    100% {
+        opacity: 1;
+        mask-image: linear-gradient(to right, black 0%, black 100%, transparent 100%);
+        -webkit-mask-image: linear-gradient(to right, black 0%, black 100%, transparent 100%);
+        filter: blur(0);
+    }
+}
+
+
+#left img {
+    width: 220px;
+    height: 220px;
+    object-fit: cover;
+    border-radius: 50%;
+    box-shadow: var(--shadow-xl);
+    opacity: 0;
+    animation: fadeIn 0.6s ease-out 0.3s forwards;
+    position: relative;
+    z-index: 2;
+    border: 4px solid rgba(255, 255, 255, 0.8);
+}
+
+/* ========== Правая панель (формы) ========== */
+#right {
+    flex: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: var(--gradient-primary);
+    color: var(--text-light);
+    overflow: hidden;
+    transition: flex var(--transition-slow) cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    z-index: var(--z-base);
+    box-shadow: var(--shadow-xl);
+    opacity: 0;
+    transform: translateX(100%);
+    animation: slideInRight 1.2s cubic-bezier(0.4, 0, 0.2, 1) 0.9s forwards;
+}
+
+@keyframes slideInRight {
+    0% {
+        opacity: 0;
+        transform: translateX(100%);
+    }
+    100% {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+#right::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(circle at 20% 50%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.08) 0%, transparent 50%);
+    animation: floatBackground 20s ease-in-out infinite;
+    pointer-events: none;
+}
+
+@keyframes floatBackground {
+    0%, 100% {
+        transform: translate(0, 0) scale(1);
+}
+    33% {
+        transform: translate(30px, 30px) scale(1.1);
+}
+    66% {
+        transform: translate(-20px, 40px) scale(0.9);
+    }
+}
+
+#right .form-container {
+    width: 92%;
+    max-width: 460px;
+    padding: 2.25rem;
+    background: rgba(18, 30, 64, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    position: relative;
+    z-index: 2;
+    opacity: 0;
+    transform: translateY(28px) scale(0.97);
+    animation: cardReveal 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) 0.9s forwards;
+    overflow: hidden;
+}
+
+#right .form-container::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.08), transparent 35%),
+                radial-gradient(circle at 80% 0%, rgba(99, 102, 241, 0.15), transparent 30%),
+                linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(99, 102, 241, 0.05));
+    pointer-events: none;
+    opacity: 0;
+    animation: fadeIn 1s ease 1.1s forwards;
+}
+
+#right .form-container::after {
+    content: '';
+    position: absolute;
+    inset: 1px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    pointer-events: none;
+}
+
+@keyframes cardReveal {
+    0% {
+        opacity: 0;
+        transform: translateY(28px) scale(0.97);
+        filter: blur(6px);
+    }
+    60% {
+        transform: translateY(-6px) scale(1.01);
+        filter: blur(2px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+/* ========== Кнопки ========== */
+#right .buttons {
+    display: flex;
+        flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2rem;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+#right .secondary-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+    width: 100%;
+    }
+
+#right button,
+button {
+    padding: 0.875rem 1.75rem;
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all var(--transition-base) cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: var(--shadow-md);
+    position: relative;
+    overflow: hidden;
+    text-transform: none;
+    letter-spacing: 0.01em;
+}
+
+#right button::before,
+button::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.3);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+#right button:hover::before,
+button:hover::before {
+    width: 300px;
+    height: 300px;
+}
+
+#right button:hover,
+button:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lg);
+}
+
+#right button:active,
+button:active {
+    transform: translateY(0) scale(0.98);
+}
+
+#right #login-btn {
+    background: var(--accent-color);
+    color: var(--text-light);
+}
+
+#right #login-btn:hover {
+    background: var(--accent-dark);
+    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4);
+}
+
+#right #register-btn {
+    background: var(--secondary-color);
+    color: var(--text-light);
+}
+
+#right #register-btn:hover {
+    background: var(--secondary-dark);
+    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.4);
+}
+
+/* ========== Формы ========== */
+#right form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    width: 100%;
+}
+
+/* Стилизация MUI TextField в form-container */
+#right .form-container .MuiTextField-root {
+    width: 100%;
+    margin-bottom: 1.5rem;
+}
+
+#right .form-container .MuiOutlinedInput-root {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-radius: 12px;
+    color: var(--text-light);
+    transition: all 0.25s ease;
+    box-shadow: none;
+}
+
+#right .form-container .MuiOutlinedInput-root .MuiOutlinedInput-notchedOutline {
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 12px;
+}
+
+#right .form-container .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
+    border-color: rgba(255, 255, 255, 0.4);
+}
+
+#right .form-container .MuiOutlinedInput-root.Mui-focused {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+#right .form-container .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+    border-color: rgba(255, 255, 255, 0.6);
+    border-width: 2px;
+}
+
+#right .form-container .MuiInputLabel-root {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 500;
+}
+
+#right .form-container .MuiInputLabel-root.Mui-focused {
+    color: rgba(255, 255, 255, 0.95);
+}
+
+#right .form-container .MuiInputBase-input {
+    color: var(--text-light);
+    padding: 14px 16px;
+    font-size: 16px;
+}
+
+#right .form-container .MuiInputBase-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+    opacity: 1;
+}
+
+/* Новый низ формы: ссылки и вспомогательные кнопки */
+.form-footer {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: stretch;
+}
+
+.form-footer .link-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.95rem;
+}
+
+.form-footer .text-link {
+    color: #8cb3ff;
+    text-decoration: none;
+    font-weight: 600;
+    transition: color 0.2s ease;
+}
+
+.form-footer .text-link:hover {
+    color: #d2e3ff;
+}
+
+.ghost-button {
+    width: 100%;
+    padding: 0.9rem 1rem;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: var(--text-light);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ghost-button:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.ghost-button:active {
+    transform: translateY(1px);
+}
+
+#right .submit-btn {
+    background: var(--accent-color);
+    color: var(--text-light);
+    font-weight: 600;
+    margin-top: 0.5rem;
+    padding: 1rem;
+    font-size: var(--font-size-lg);
+}
+
+#right .submit-btn:hover {
+    background: var(--accent-dark);
+    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4);
+    }
+
+#right .submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ========== Анимации загрузки ========== */
+body.loading #container #left {
+    flex: 1 0 100%;
+}
+
+body.loading #container #left h1 {
+    font-size: 4rem;
+    letter-spacing: 4px;
+}
+
+body.loading #container #right {
+    flex: 0;
+}
+
+body.animate #left {
+    flex: 1;
+}
+
+body.animate #left h1 {
+    font-size: var(--font-size-4xl);
+    letter-spacing: -0.02em;
+}
+
+body.animate #right {
+    flex: 1;
+}
+
+/* ========== Дополнительные анимации ========== */
+@keyframes fadeIn {
+    from {
+    opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideUp {
+    from {
+    opacity: 0;
+        transform: translateY(20px);
+}
+    to {
+    opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes scaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.05);
+        opacity: 0.9;
+    }
+}
+
+.animated-element {
+    animation: fadeIn 0.6s ease-out forwards;
+}
+
+/* ========== Утилиты ========== */
+.fade-in {
+    animation: fadeIn 0.6s ease-out forwards;
+}
+
+.slide-up {
+    animation: slideUp 0.6s ease-out forwards;
+    }
+
+.scale-in {
+    animation: scaleIn 0.4s ease-out forwards;
+}
+
+/* ========== Скроллбар ========== */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--background-gray);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--gradient-primary);
+    border-radius: 10px;
+    border: 2px solid var(--background-gray);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-dark);
+}
+
+/* ========== Selection ========== */
+::selection {
+    background: var(--primary-color);
+    color: var(--text-light);
+}
+
+/* ========== Адаптивность ========== */
+@media (max-width: 1024px) {
+    #left h1 {
+        font-size: var(--font-size-3xl);
+    }
+    
+    #left img {
+        width: 180px;
+        height: 180px;
+}
+}
+
+@media (max-width: 768px) {
+    #container {
+    flex-direction: column;
+}
+
+    #left,
+    #right {
+        flex: 1 0 50%;
+        min-height: 50vh;
+}
+
+    #left {
+    padding: 1.5rem;
+}
+
+    #left h1 {
+        font-size: var(--font-size-2xl);
+        margin-bottom: 1.5rem;
+}
+
+    #left img {
+        width: 150px;
+        height: 150px;
+}
+
+    #right .form-container {
+        width: 95%;
+        padding: 2rem 1.5rem;
+        max-width: 100%;
+}
+}
+
+@media (max-width: 480px) {
+    :root {
+        --border-radius: 12px;
+        --border-radius-lg: 20px;
+}
+
+    #left h1 {
+        font-size: var(--font-size-xl);
+}
+
+    #left img {
+        width: 120px;
+        height: 120px;
+    }
+
+    #right .form-container {
+        padding: 1.5rem 1rem;
+    }
+
+    #right button {
+        padding: 0.75rem 1.5rem;
+        font-size: var(--font-size-sm);
+    }
+}
+
+/* ========== Темная тема (опционально) ========== */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background-light: #0f172a;
+        --text-color: #f1f5f9;
+        --background-gray: #1e293b;
+}
+}

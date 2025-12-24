@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KipCalendar - Регистрация</title>
+    <style>
+        /* Переменные для стилей */
+        :root {
+            --primary-color: #007bff;
+            /* Основной синий */
+            --secondary-color: #0056b3;
+            /* Темный синий */
+            --accent-color: #00c853;
+            /* Зеленый акцент */
+            --background-light: #ffffff;
+            /* Белый фон */
+            --background-dark: #f8f9fa;
+            /* Светло-серый */
+            --text-color: #212529;
+            /* Темный текст */
+            --text-light: #ffffff;
+            /* Белый текст */
+            --border-radius: 8px;
+            /* Скругление углов */
+            --shadow-light: 0 4px 6px rgba(0, 0, 0, 0.1);
+            /* Легкая тень */
+            --shadow-medium: 0 6px 12px rgba(0, 0, 0, 0.15);
+            /* Средняя тень */
+            --shadow-dark: 0 8px 16px rgba(0, 0, 0, 0.2);
+            /* Темная тень */
+            --transition-time: 0.3s;
+            /* Время перехода */
+            --animation-duration: 1s;
+            /* Длительность анимации */
+            --font-family: 'Roboto', sans-serif;
+            /* Современный шрифт */
+            --font-size-base: 16px;
+            --font-size-large: 2.5rem;
+            --font-size-medium: 1.5rem;
+            --font-size-small: 0.875rem;
+            --gradient-blue: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+            /* Синий градиент */
+            --gradient-light: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            /* Светлый градиент */
+        }
+
+        /* Базовые стили */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-family);
+            font-size: var(--font-size-base);
+            color: var(--text-color);
+            background-color: var(--background-light);
+            overflow: hidden;
+            /* Предотвращаем скролл во время анимации */
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #left {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: var(--background-light);
+            transition: flex var(--animation-duration) ease-in-out;
+            position: relative;
+            z-index: 2;
+            letter-spacing: -5px;
+        }
+
+        #left h1 {
+            font-size: var(--font-size-large);
+            color: var(--primary-color);
+            margin-bottom: 2rem;
+            text-shadow: var(--shadow-light);
+            transition: font-size var(--animation-duration) ease-in-out;
+        }
+
+        #left .char {
+            opacity: 0;
+            display: inline-block;
+            /* Для анимации */
+        }
+
+        body.typing #left .char {
+            animation: fadeIn 0.1s ease-in-out forwards;
+            animation-delay: calc(0.1s * var(--char-index));
+        }
+
+        #left img {
+            width: 200px;
+            height: 200px;
+            object-fit: cover;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-medium);
+            opacity: 0;
+            transform: translateY(50px);
+            transition: opacity var(--transition-time) ease, transform var(--transition-time) ease;
+        }
+
+        #right {
+            flex: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: var(--gradient-blue);
+            color: var(--text-light);
+            overflow: hidden;
+            transition: flex var(--animation-duration) ease-in-out;
+            position: relative;
+            z-index: 1;
+            box-shadow: var(--shadow-dark);
+        }
+
+        #right .form-container {
+            width: 80%;
+            max-width: 400px;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            /* Полупрозрачный белый */
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-medium);
+            backdrop-filter: blur(10px);
+            /* Современный эффект размытия */
+            transform: translateX(100%);
+            transition: transform var(--animation-duration) ease-in-out;
+        }
+
+        #right .buttons {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 2rem;
+        }
+
+        #right button {
+            padding: 0.75rem 1.5rem;
+            font-size: var(--font-size-medium);
+            border: none;
+            border-radius: var(--border-radius);
+            cursor: pointer;
+            transition: background var(--transition-time) ease, transform var(--transition-time) ease;
+            box-shadow: var(--shadow-light);
+        }
+
+        #right button:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-medium);
+        }
+
+        #right #login-btn {
+            background: var(--accent-color);
+            color: var(--text-light);
+        }
+
+        #right #register-btn {
+            background: var(--secondary-color);
+            color: var(--text-light);
+        }
+
+        #right form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        #right input {
+            padding: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: var(--border-radius);
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text-light);
+            font-size: var(--font-size-base);
+            transition: border var(--transition-time) ease;
+        }
+
+        #right input:focus {
+            border-color: var(--accent-color);
+            outline: none;
+            box-shadow: var(--shadow-light);
+        }
+
+        #right input::placeholder {
+            color: rgba(255, 255, 255, 0.7);
+        }
+
+        #right .submit-btn {
+            background: var(--accent-color);
+            color: var(--text-light);
+            font-weight: bold;
+            margin-top: 1rem;
+        }
+
+        /* Стили для анимации загрузки */
+        body.loading #container #left {
+            flex: 1 0 100%;
+        }
+
+        body.loading #container #left h1 {
+            font-size: 4rem;
+            /* Больше в центре */
+        }
+
+        body.loading #container #right {
+            flex: 0;
+        }
+
+        /* Анимации */
+        @keyframes slideLeft {
+            from {
+                transform: translateX(0);
+            }
+
+            to {
+                transform: translateX(-100%);
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100%);
+            }
+
+            to {
+                transform: translateX(0);
+            }
+        }
+
+        @keyframes bounce {
+
+            0%,
+            20%,
+            50%,
+            80%,
+            100% {
+                transform: translateY(0);
+            }
+
+            40% {
+                transform: translateY(-10px);
+            }
+
+            60% {
+                transform: translateY(-5px);
+            }
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.05);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        @keyframes rotate {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes tada {
+            from {
+                transform: scale3d(1, 1, 1);
+            }
+
+            10%,
+            20% {
+                transform: scale3d(0.9, 0.9, 0.9) rotate3d(0, 0, 1, -3deg);
+            }
+
+            30%,
+            50%,
+            70%,
+            90% {
+                transform: scale3d(1.1, 1.1, 1.1) rotate3d(0, 0, 1, 3deg);
+            }
+
+            40%,
+            60%,
+            80% {
+                transform: scale3d(1.1, 1.1, 1.1) rotate3d(0, 0, 1, -3deg);
+            }
+
+            to {
+                transform: scale3d(1, 1, 1);
+            }
+        }
+
+        /* Применение анимаций */
+        body.animate #left {
+            flex: 1;
+        }
+
+        body.animate #left h1 {
+            font-size: var(--font-size-large);
+        }
+
+        body.animate #left img {
+            opacity: 1;
+            transform: translateY(0);
+            animation: fadeIn var(--animation-duration) ease-in-out 0.5s forwards, tada var(--animation-duration) ease-in-out 1.5s forwards;
+        }
+
+        body.animate #right {
+            flex: 1;
+            animation: slideInRight var(--animation-duration) ease-in-out forwards;
+        }
+
+        body.animate #right .form-container {
+            transform: translateX(0);
+            animation: pulse var(--animation-duration) ease-in-out forwards;
+        }
+
+        /* Дополнительные современные стили */
+        button:active {
+            transform: scale(0.98);
+        }
+
+        input[type="checkbox"] {
+            accent-color: var(--accent-color);
+        }
+
+        /* Медиа-запросы для responsivity */
+        @media (max-width: 768px) {
+            #container {
+                flex-direction: column;
+            }
+
+            #left,
+            #right {
+                flex: 1 0 50%;
+            }
+
+            #left h1 {
+                font-size: var(--font-size-medium);
+            }
+
+            #left img {
+                width: 150px;
+                height: 150px;
+            }
+
+            #right .form-container {
+                width: 90%;
+            }
+        }
+
+        /* Еще больше стилей для "очень большого CSS" */
+        /* Стили для ссылок */
+        a {
+            color: var(--primary-color);
+            text-decoration: none;
+            transition: color var(--transition-time) ease;
+        }
+
+        a:hover {
+            color: var(--secondary-color);
+        }
+
+        /* Стили для placeholder */
+        ::placeholder {
+            font-style: italic;
+        }
+
+        /* Стили для selection */
+        ::selection {
+            background: var(--accent-color);
+            color: var(--text-light);
+        }
+
+        /* Стили для скроллбара */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--background-dark);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--primary-color);
+            border-radius: 4px;
+        }
+
+        /* Дополнительные анимации для элементов */
+        .animated-element {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+
+        /* Градиенты для кнопок */
+        button.gradient {
+            background: var(--gradient-blue);
+        }
+
+        /* Тени для форм */
+        form {
+            box-shadow: var(--shadow-medium);
+        }
+
+        /* Бордюры */
+        .bordered {
+            border: 1px solid var(--primary-color);
+            border-radius: var(--border-radius);
+        }
+
+        /* Фlex utilities */
+        .flex-center {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .flex-column {
+            flex-direction: column;
+        }
+
+        /* Grid utilities */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        /* Padding utilities */
+        .p-1 {
+            padding: 0.25rem;
+        }
+
+        .p-2 {
+            padding: 0.5rem;
+        }
+
+        .p-3 {
+            padding: 1rem;
+        }
+
+        .p-4 {
+            padding: 1.5rem;
+        }
+
+        .p-5 {
+            padding: 2rem;
+        }
+
+        /* Margin utilities */
+        .m-1 {
+            margin: 0.25rem;
+        }
+
+        .m-2 {
+            margin: 0.5rem;
+        }
+
+        .m-3 {
+            margin: 1rem;
+        }
+
+        .m-4 {
+            margin: 1.5rem;
+        }
+
+        .m-5 {
+            margin: 2rem;
+        }
+
+        /* Text utilities */
+        .text-center {
+            text-align: center;
+        }
+
+        .text-left {
+            text-align: left;
+        }
+
+        .text-right {
+            text-align: right;
+        }
+
+        .text-bold {
+            font-weight: bold;
+        }
+
+        .text-italic {
+            font-style: italic;
+        }
+
+        /* Color utilities */
+        .bg-primary {
+            background: var(--primary-color);
+        }
+
+        .bg-secondary {
+            background: var(--secondary-color);
+        }
+
+        .bg-accent {
+            background: var(--accent-color);
+        }
+
+        .text-primary {
+            color: var(--primary-color);
+        }
+
+        .text-secondary {
+            color: var(--secondary-color);
+        }
+
+        .text-accent {
+            color: var(--accent-color);
+        }
+
+        /* Размеры */
+        .fs-small {
+            font-size: var(--font-size-small);
+        }
+
+        .fs-medium {
+            font-size: var(--font-size-medium);
+        }
+
+        .fs-large {
+            font-size: var(--font-size-large);
+        }
+
+        /* Еще анимации */
+        @keyframes shake {
+            0% {
+                transform: translate(1px, 1px) rotate(0deg);
+            }
+
+            10% {
+                transform: translate(-1px, -2px) rotate(-1deg);
+            }
+
+            20% {
+                transform: translate(-3px, 0px) rotate(1deg);
+            }
+
+            30% {
+                transform: translate(3px, 2px) rotate(0deg);
+            }
+
+            40% {
+                transform: translate(1px, -1px) rotate(1deg);
+            }
+
+            50% {
+                transform: translate(-1px, 2px) rotate(-1deg);
+            }
+
+            60% {
+                transform: translate(-3px, 1px) rotate(0deg);
+            }
+
+            70% {
+                transform: translate(3px, 1px) rotate(-1deg);
+            }
+
+            80% {
+                transform: translate(-1px, -1px) rotate(1deg);
+            }
+
+            90% {
+                transform: translate(1px, 2px) rotate(0deg);
+            }
+
+            100% {
+                transform: translate(1px, -2px) rotate(-1deg);
+            }
+        }
+
+        .shake {
+            animation: shake 0.5s;
+        }
+
+        /* И многое другое... (CSS уже очень большой) */
+    </style>
+</head>
+
+<body class="loading">
+    <div id="container">
+        <div id="left">
+            <h1>
+                <span class="char" style="--char-index: 0;">K</span>
+                <span class="char" style="--char-index: 1;">i</span>
+                <span class="char" style="--char-index: 2;">p</span>
+                <span class="char" style="--char-index: 3;">C</span>
+                <span class="char" style="--char-index: 4;">a</span>
+                <span class="char" style="--char-index: 5;">l</span>
+                <span class="char" style="--char-index: 6;">e</span>
+                <span class="char" style="--char-index: 7;">n</span>
+                <span class="char" style="--char-index: 8;">d</span>
+                <span class="char" style="--char-index: 9;">a</span>
+                <span class="char" style="--char-index: 10;">r</span>
+            </h1>
+            <img src="src/assets_logo/kip1.jpeg" alt="Kip Logo">
+        </div>
+        <div id="right">
+            <div class="form-container">
+                <div class="buttons">
+                    <button id="login-btn">Вход</button>
+                    <button id="register-btn">Регистрация</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Анимация при загрузке
+        window.addEventListener('load', () => {
+            document.body.classList.add('typing');
+            const typingDuration = 1100; // 11 символов * 100ms
+            setTimeout(() => {
+                document.body.classList.remove('loading');
+                document.body.classList.add('animate');
+            }, typingDuration);
+        });
+
+        // Переключение между формами
+        const loginBtn = document.getElementById('login-btn');
+        const registerBtn = document.getElementById('register-btn');
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+
+        // Инициализация: показываем форму регистрации по умолчанию
+        registerForm.style.display = 'flex';
+        registerBtn.style.background = 'var(--accent-color)';
+        loginBtn.style.background = 'var(--secondary-color)';
+
+        loginBtn.addEventListener('click', () => {
+            loginForm.style.display = 'flex';
+            registerForm.style.display = 'none';
+            loginBtn.style.background = 'var(--accent-color)';
+            registerBtn.style.background = 'var(--secondary-color)';
+        });
+
+        registerBtn.addEventListener('click', () => {
+            registerForm.style.display = 'flex';
+            loginForm.style.display = 'none';
+            registerBtn.style.background = 'var(--accent-color)';
+            loginBtn.style.background = 'var(--secondary-color)';
+        });
+
+        // Простая валидация форм (пример)
+        registerForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            alert('Регистрация успешна! (Симуляция)');
+        });
+
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            alert('Вход успешен! (Симуляция)');
+        });
+    </script>
+</body>
+
+</html>
