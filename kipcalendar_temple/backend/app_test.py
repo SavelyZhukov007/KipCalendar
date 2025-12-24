@@ -69,229 +69,228 @@ def init_db():
         db.executescript(
             """
         CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    email TEXT,
-    roles TEXT NOT NULL,
-    current_role TEXT NOT NULL,
-    logout_timestamp INTEGER,
-    first_name TEXT,  -- Added for teacher full name
-    last_name TEXT,   -- Added for teacher full name
-    middle_name TEXT  -- Added for teacher full name
-);
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email TEXT,
+            roles TEXT NOT NULL,
+            current_role TEXT NOT NULL,
+            logout_timestamp INTEGER,
+            first_name TEXT,
+            last_name TEXT,
+            middle_name TEXT
+        );
 
-CREATE TABLE IF NOT EXISTS groups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,  -- e.g., '2ИСИП-724'
-    specialty TEXT NOT NULL,  -- Specialty name, uppercase
-    course INTEGER NOT NULL,  -- Course number
-    group_number INTEGER NOT NULL,  -- Group number
-    admission_year INTEGER NOT NULL,  -- Last two digits of admission year
-    type TEXT,
-    curator_id INTEGER,
-    building_id INTEGER,  -- Added reference to primary building for the group
-    FOREIGN KEY(curator_id) REFERENCES users(id),
-    FOREIGN KEY(building_id) REFERENCES buildings(id)
-);
+        CREATE TABLE IF NOT EXISTS buildings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            address TEXT
+        );
 
-CREATE TABLE IF NOT EXISTS user_groups (
-    user_id INTEGER,
-    group_id INTEGER,
-    FOREIGN KEY(user_id) REFERENCES users(id),
-    FOREIGN KEY(group_id) REFERENCES groups(id),
-    PRIMARY KEY(user_id, group_id)
-);
+        CREATE TABLE IF NOT EXISTS rooms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            building_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            max_groups INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY(building_id) REFERENCES buildings(id)
+        );
 
-CREATE TABLE IF NOT EXISTS subjects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    code TEXT,
-    description TEXT
-);
+        CREATE TABLE IF NOT EXISTS groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            specialty TEXT NOT NULL,
+            course INTEGER NOT NULL,
+            group_number INTEGER NOT NULL,
+            admission_year INTEGER NOT NULL,
+            type TEXT,
+            curator_id INTEGER,
+            building_id INTEGER,
+            FOREIGN KEY(curator_id) REFERENCES users(id),
+            FOREIGN KEY(building_id) REFERENCES buildings(id)
+        );
 
-CREATE TABLE IF NOT EXISTS group_subjects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id INTEGER NOT NULL,
-    subject_id INTEGER NOT NULL,
-    total_hours INTEGER NOT NULL,  -- Unique total hours per subject per group
-    FOREIGN KEY(group_id) REFERENCES groups(id),
-    FOREIGN KEY(subject_id) REFERENCES subjects(id),
-    UNIQUE(group_id, subject_id)
-);
+        CREATE TABLE IF NOT EXISTS user_groups (
+            user_id INTEGER,
+            group_id INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(group_id) REFERENCES groups(id),
+            PRIMARY KEY(user_id, group_id)
+        );
 
-CREATE TABLE IF NOT EXISTS teacher_subjects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    teacher_id INTEGER NOT NULL,
-    subject_id INTEGER NOT NULL,
-    FOREIGN KEY(teacher_id) REFERENCES users(id),
-    FOREIGN KEY(subject_id) REFERENCES subjects(id),
-    UNIQUE(teacher_id, subject_id)
-);
+        CREATE TABLE IF NOT EXISTS subjects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            code TEXT,
+            description TEXT
+        );
 
-CREATE TABLE IF NOT EXISTS teacher_availability (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    teacher_id INTEGER NOT NULL,
-    day_of_week INTEGER NOT NULL,  -- 1=Monday, ..., 7=Sunday
-    available BOOLEAN NOT NULL DEFAULT TRUE,  -- False if unavailable on that day
-    notes TEXT,  -- e.g., 'Cannot teach on Thursdays'
-    FOREIGN KEY(teacher_id) REFERENCES users(id),
-    UNIQUE(teacher_id, day_of_week)
-);
+        CREATE TABLE IF NOT EXISTS group_subjects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            subject_id INTEGER NOT NULL,
+            total_hours INTEGER NOT NULL,
+            FOREIGN KEY(group_id) REFERENCES groups(id),
+            FOREIGN KEY(subject_id) REFERENCES subjects(id),
+            UNIQUE(group_id, subject_id)
+        );
 
-CREATE TABLE IF NOT EXISTS buildings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,  -- Building name
-    address TEXT
-);
+        CREATE TABLE IF NOT EXISTS teacher_subjects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_id INTEGER NOT NULL,
+            subject_id INTEGER NOT NULL,
+            FOREIGN KEY(teacher_id) REFERENCES users(id),
+            FOREIGN KEY(subject_id) REFERENCES subjects(id),
+            UNIQUE(teacher_id, subject_id)
+        );
 
-CREATE TABLE IF NOT EXISTS rooms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    building_id INTEGER NOT NULL,
-    name TEXT NOT NULL,  -- Room/cabinet name
-    max_groups INTEGER NOT NULL DEFAULT 1,  -- Maximum number of groups that can fit
-    FOREIGN KEY(building_id) REFERENCES buildings(id)
-);
+        CREATE TABLE IF NOT EXISTS teacher_availability (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher_id INTEGER NOT NULL,
+            day_of_week INTEGER NOT NULL,
+            available BOOLEAN NOT NULL DEFAULT 1,
+            notes TEXT,
+            FOREIGN KEY(teacher_id) REFERENCES users(id),
+            UNIQUE(teacher_id, day_of_week)
+        );
 
-CREATE TABLE IF NOT EXISTS terms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    start_date TEXT NOT NULL,
-    end_date TEXT NOT NULL
-);
+        CREATE TABLE IF NOT EXISTS terms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL
+        );
 
-CREATE TABLE IF NOT EXISTS schedule_templates (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id INTEGER NOT NULL,
-    term_id INTEGER NOT NULL,
-    week_type TEXT NOT NULL CHECK (week_type IN ('even', 'odd')),  -- 'even' or 'odd' for even/odd weeks
-    day_of_week INTEGER NOT NULL,  -- 1=Monday, ..., 7=Sunday
-    FOREIGN KEY(group_id) REFERENCES groups(id),
-    FOREIGN KEY(term_id) REFERENCES terms(id)
-);
+        CREATE TABLE IF NOT EXISTS schedule_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            term_id INTEGER NOT NULL,
+            week_type TEXT NOT NULL CHECK (week_type IN ('even', 'odd')),
+            day_of_week INTEGER NOT NULL,
+            FOREIGN KEY(group_id) REFERENCES groups(id),
+            FOREIGN KEY(term_id) REFERENCES terms(id)
+        );
 
-CREATE TABLE IF NOT EXISTS lessons (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    template_id INTEGER NOT NULL,
-    subject_id INTEGER NOT NULL,
-    teacher_id INTEGER NOT NULL,
-    room_id INTEGER NOT NULL,  -- Reference to rooms table for cabinet and building
-    start_time TEXT NOT NULL,
-    end_time TEXT NOT NULL,
-    homework TEXT,  -- Homework for the lesson
-    FOREIGN KEY(template_id) REFERENCES schedule_templates(id),
-    FOREIGN KEY(subject_id) REFERENCES subjects(id),
-    FOREIGN KEY(teacher_id) REFERENCES users(id),
-    FOREIGN KEY(room_id) REFERENCES rooms(id)
-);
+        CREATE TABLE IF NOT EXISTS lessons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            subject_id INTEGER NOT NULL,
+            teacher_id INTEGER NOT NULL,
+            room_id INTEGER NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            homework TEXT,
+            FOREIGN KEY(template_id) REFERENCES schedule_templates(id),
+            FOREIGN KEY(subject_id) REFERENCES subjects(id),
+            FOREIGN KEY(teacher_id) REFERENCES users(id),
+            FOREIGN KEY(room_id) REFERENCES rooms(id)
+        );
 
-CREATE TABLE IF NOT EXISTS actual_lessons (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    lesson_id INTEGER NOT NULL,
-    date TEXT NOT NULL,
-    comments TEXT,
-    FOREIGN KEY(lesson_id) REFERENCES lessons(id)
-);
+        CREATE TABLE IF NOT EXISTS actual_lessons (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            comments TEXT,
+            FOREIGN KEY(lesson_id) REFERENCES lessons(id)
+        );
 
-CREATE TABLE IF NOT EXISTS marks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    actual_lesson_id INTEGER NOT NULL,
-    student_id INTEGER NOT NULL,
-    mark1 TEXT,  -- First mark
-    mark2 TEXT,  -- Second mark (up to 2 marks per lesson)
-    absence_type TEXT CHECK (absence_type IN ('Н', 'НБ', NULL)),  -- 'Н' for absent, 'НБ' for absent with reason, or NULL
-    comment TEXT CHECK (LENGTH(comment) BETWEEN 1 AND 255),
-    timestamp INTEGER,
-    FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
-    FOREIGN KEY(student_id) REFERENCES users(id)
-);
+        CREATE TABLE IF NOT EXISTS marks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actual_lesson_id INTEGER NOT NULL,
+            student_id INTEGER NOT NULL,
+            mark1 TEXT,
+            mark2 TEXT,
+            absence_type TEXT CHECK (absence_type IN ('Н', 'НБ', NULL)),
+            comment TEXT CHECK (LENGTH(comment) BETWEEN 1 AND 255),
+            timestamp INTEGER,
+            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
+            FOREIGN KEY(student_id) REFERENCES users(id)
+        );
 
-CREATE TABLE IF NOT EXISTS attachments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    lesson_id INTEGER,  -- Can attach to lesson (template) or actual_lesson
-    actual_lesson_id INTEGER,
-    file_path TEXT NOT NULL,  -- Path to the file
-    description TEXT,
-    timestamp INTEGER,
-    FOREIGN KEY(lesson_id) REFERENCES lessons(id),
-    FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
-    CHECK (lesson_id IS NOT NULL OR actual_lesson_id IS NOT NULL)  -- Ensure attached to at least one
-);
+        CREATE TABLE IF NOT EXISTS attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id INTEGER,
+            actual_lesson_id INTEGER,
+            file_path TEXT NOT NULL,
+            description TEXT,
+            timestamp INTEGER,
+            FOREIGN KEY(lesson_id) REFERENCES lessons(id),
+            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
+            CHECK (lesson_id IS NOT NULL OR actual_lesson_id IS NOT NULL)
+        );
 
--- Additional tables from the original (events, etc.) remain unchanged
-CREATE TABLE IF NOT EXISTS events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    date TEXT NOT NULL,
-    time TEXT NOT NULL,
-    description TEXT,
-    event_type TEXT NOT NULL,
-    content TEXT,
-    end_date TEXT,
-    end_time TEXT,
-    recurring_options TEXT,
-    subtasks TEXT,
-    privacy TEXT NOT NULL,
-    password_hash TEXT,
-    expiration_days INTEGER,
-    version INTEGER DEFAULT 0,
-    FOREIGN KEY(owner_id) REFERENCES users(id)
-);
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            description TEXT,
+            event_type TEXT NOT NULL,
+            content TEXT,
+            end_date TEXT,
+            end_time TEXT,
+            recurring_options TEXT,
+            subtasks TEXT,
+            privacy TEXT NOT NULL,
+            password_hash TEXT,
+            expiration_days INTEGER,
+            version INTEGER DEFAULT 0,
+            FOREIGN KEY(owner_id) REFERENCES users(id)
+        );
 
-CREATE TABLE IF NOT EXISTS shared_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    accepted BOOLEAN,
-    reason TEXT,
-    forbid_edit BOOLEAN,
-    allow_comments BOOLEAN,
-    FOREIGN KEY(event_id) REFERENCES events(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-);
+        CREATE TABLE IF NOT EXISTS shared_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            accepted BOOLEAN,
+            reason TEXT,
+            forbid_edit BOOLEAN,
+            allow_comments BOOLEAN,
+            FOREIGN KEY(event_id) REFERENCES events(id),
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
 
-CREATE TABLE IF NOT EXISTS event_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    field TEXT,
-    old_value TEXT,
-    new_value TEXT,
-    timestamp INTEGER,
-    FOREIGN KEY(event_id) REFERENCES events(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-);
+        CREATE TABLE IF NOT EXISTS event_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            field TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            timestamp INTEGER,
+            FOREIGN KEY(event_id) REFERENCES events(id),
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
 
-CREATE TABLE IF NOT EXISTS comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    timestamp INTEGER,
-    FOREIGN KEY(event_id) REFERENCES events(id),
-    FOREIGN KEY(user_id) REFERENCES users(id)
-);
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            timestamp INTEGER,
+            FOREIGN KEY(event_id) REFERENCES events(id),
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
 
-CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    timestamp INTEGER,
-    read BOOLEAN DEFAULT FALSE,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-);
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            timestamp INTEGER,
+            read BOOLEAN DEFAULT FALSE,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
 
-CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    action TEXT NOT NULL,
-    entity_id INTEGER,
-    old_value TEXT,
-    new_value TEXT,
-    timestamp INTEGER,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-);    
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            entity_id INTEGER,
+            old_value TEXT,
+            new_value TEXT,
+            timestamp INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        );
         """
         )
         db.commit()
