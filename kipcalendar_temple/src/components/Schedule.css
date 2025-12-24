@@ -1,6 +1,7 @@
-/* Schedule.css - Стили для страницы расписания, основанные на DemoStyles.css и Dashboard.css */
+/* Schedule.css - Обновленные стили для страницы расписания, с улучшенной логикой и видом для электронного журнала */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css'); /* Добавляем Font Awesome для иконок */
 
 /* ========== CSS Переменные (из DemoStyles.css, адаптированные) ========== */
 :root {
@@ -13,6 +14,8 @@
     --accent-color: #10b981;
     --accent-dark: #059669;
     --accent-light: #34d399;
+    --warning-color: #f59e0b;
+    --error-color: #ef4444;
 
     /* Фоны */
     --background-light: #ffffff;
@@ -26,16 +29,15 @@
     --text-gray-light: #94a3b8;
 
     /* Границы и скругления */
-    --border-radius: 16px;
-    --border-radius-sm: 8px;
-    --border-radius-lg: 24px;
+    --border-radius: 8px; /* Уменьшили для более строгого вида журнала */
+    --border-radius-sm: 4px;
+    --border-radius-lg: 12px;
     --border-color: rgba(148, 163, 184, 0.2);
 
     /* Тени */
-    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.08);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.12);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16);
-    --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.12);
 
     /* Переходы и анимации */
     --transition-base: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -53,12 +55,12 @@
     --gradient-accent: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
 }
 
-/* ========== Основные стили (адаптировано из Dashboard.css) ========== */
+/* ========== Основные стили ========== */
 * {
     font-family: var(--font-family);
 }
 
-/* ========== Контейнер страницы (из Dashboard.css) ========== */
+/* ========== Контейнер страницы ========== */
 .dashboard-container {
     max-width: 100%;
     padding: 0;
@@ -67,40 +69,35 @@
     display: flex;
 }
 
-/* ========== Левая часть: Расписание (адаптировано из .selected-day-events в Dashboard.css) ========== */
+/* ========== Левая часть: Расписание ========== */
 .selected-day-events {
     flex: 3;
-    padding: 24px;
-    background: rgba(255, 255, 255, 0.25);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: var(--border-radius);
-    box-shadow: var(--shadow-lg);
+    padding: 16px;
+    background: var(--background-light);
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--shadow-md);
     overflow-y: auto;
-    min-height: 600px;
+    margin: 16px;
 }
 
 .events-title {
     color: var(--text-color);
     font-weight: 600;
-    font-size: var(--font-size-2xl);
+    font-size: var(--font-size-xl);
     margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 2px solid #e8eaed;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
 }
 
-/* ========== Правая часть: Календарь (адаптировано из .main-calendar в Dashboard.css) ========== */
+/* ========== Правая часть: Календарь ========== */
 .main-calendar {
     flex: 1;
-    max-width: 300px;
-    padding: 24px;
-    background: rgba(255, 255, 255, 0.25);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: var(--border-radius);
-    box-shadow: var(--shadow-lg);
+    max-width: 320px;
+    padding: 16px;
+    background: var(--background-light);
+    border-radius: var(--border-radius-lg);
+    box-shadow: var(--shadow-md);
+    margin: 16px;
 }
 
 .small-calendar .react-calendar {
@@ -112,7 +109,8 @@
 .small-calendar .react-calendar__navigation {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
+    color: var(--text-color);
 }
 
 .small-calendar .react-calendar__month-view__weekdays__weekday {
@@ -120,71 +118,66 @@
     font-weight: 500;
     font-size: var(--font-size-sm);
     text-align: center;
-    padding: 8px 0;
+    padding: 6px 0;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 .small-calendar .react-calendar__tile {
-    height: 40px;
-    border: 1px solid var(--border-color);
-    background: rgba(255, 255, 255, 0.1);
+    height: 36px;
+    background: transparent;
     color: var(--text-color);
-    position: relative;
-    padding: 8px;
     font-size: var(--font-size-sm);
     transition: background-color var(--transition-base);
     cursor: pointer;
     border-radius: var(--border-radius-sm);
+    text-align: center;
 }
 
 .small-calendar .react-calendar__tile:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--background-gray);
 }
 
 .small-calendar .react-calendar__tile--now {
-    border: 2px solid var(--primary-color);
-    background: rgba(232, 240, 254, 0.3);
+    background: var(--primary-light);
+    color: var(--text-light);
     font-weight: 600;
 }
 
 .small-calendar .react-calendar__tile--active {
-    background: var(--gradient-primary);
+    background: var(--primary-color);
     color: var(--text-light);
     font-weight: 600;
-    box-shadow: var(--shadow-glow);
+    box-shadow: var(--shadow-sm);
 }
 
-/* ========== Стили для расписания (новые, вдохновленные glassmorphism из Dashboard и анимациями из DemoStyles) ========== */
+/* ========== Стили для расписания (обновлено: табличный вид с grid для лучшей читаемости) ========== */
 .dnevnik {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 16px;
 }
 
 .dnevnik-day {
-    background: rgba(255, 255, 255, 0.25);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: var(--background-light);
+    border: 1px solid var(--border-color);
     border-radius: var(--border-radius);
-    box-shadow: var(--shadow-md);
-    padding: 16px;
+    box-shadow: var(--shadow-sm);
+    padding: 12px;
     transition: box-shadow var(--transition-base);
 }
 
 .dnevnik-day:hover {
-    box-shadow: var(--shadow-lg);
+    box-shadow: var(--shadow-md);
 }
 
 .dnevnik-day__header {
-    margin-bottom: 12px;
-    padding-bottom: 8px;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
     border-bottom: 1px solid var(--border-color);
 }
 
 .dnevnik-day__title {
-    font-size: var(--font-size-xl);
+    font-size: var(--font-size-lg);
     font-weight: 600;
     color: var(--text-color);
 }
@@ -192,36 +185,33 @@
 .dnevnik-day__lessons {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
 }
 
 .dnevnik-lesson {
-    display: flex;
+    display: grid;
+    grid-template-columns: 40px 120px 1fr 80px 80px 1fr; /* Колонки: номер, время, предмет+кабинет, оценки, комментарий, домашка */
     align-items: center;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--background-gray);
     border-radius: var(--border-radius-sm);
-    padding: 12px;
+    padding: 8px;
     border: 1px solid var(--border-color);
-    transition: background-color var(--transition-base), box-shadow var(--transition-base);
-    cursor: pointer;
+    transition: background-color var(--transition-base);
 }
 
 .dnevnik-lesson:hover {
-    background: rgba(255, 255, 255, 0.2);
-    box-shadow: var(--shadow-sm);
+    background: rgba(255, 255, 255, 0.9);
 }
 
 .dnevnik-lesson__number {
-    width: 40px;
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-base);
     font-weight: 600;
     color: var(--primary-color);
     text-align: center;
-    margin-right: 16px;
 }
 
 .dnevnik-lesson__subject {
-    flex: 2;
+    grid-column: span 2; /* Объединяем с кабинетом */
     display: flex;
     flex-direction: column;
 }
@@ -229,7 +219,7 @@
 .dnevnik-lesson__time {
     font-size: var(--font-size-sm);
     color: var(--text-gray);
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 .js-rt_licey-dnevnik-subject {
@@ -241,14 +231,12 @@
 .dnevnik-lesson__cabinet {
     font-size: var(--font-size-sm);
     color: var(--text-gray-light);
-    margin-top: 4px;
 }
 
 .dnevnik-lesson__marks {
-    flex: 1;
     display: flex;
-    gap: 8px;
-    margin-left: 16px;
+    gap: 4px;
+    justify-content: center;
 }
 
 .dnevnik-mark {
@@ -257,11 +245,12 @@
 }
 
 .dnevnik-mark__value {
-    padding: 4px 8px;
+    padding: 2px 6px;
     border-radius: var(--border-radius-sm);
     font-weight: 600;
     color: var(--text-light);
-    transition: background-color var(--transition-base);
+    min-width: 24px;
+    text-align: center;
 }
 
 .dnevnik-mark__value[data-value="5"] {
@@ -269,140 +258,126 @@
 }
 
 .dnevnik-mark__value[data-value="4"] {
-    background: #f59e0b;
+    background: var(--warning-color);
 }
 
 .dnevnik-mark__value[data-value="3"] {
-    background: #ef4444;
+    background: var(--error-color);
 }
 
 .dnevnik-mark__value[data-value="5/3"] {
-    background: linear-gradient(135deg, var(--accent-color) 50%, #ef4444 50%);
+    background: linear-gradient(135deg, var(--accent-color) 50%, var(--error-color) 50%);
 }
 
 .dnevnik-mark__comment {
     font-size: var(--font-size-sm);
     color: var(--text-gray);
     margin-left: 4px;
+    grid-column: span 1; /* Отдельная колонка для комментария */
 }
 
 .dnevnik-lesson__hometask {
-    flex: 2;
-    margin-left: 16px;
-}
-
-.dnevnik-lesson__task {
-    font-size: var(--font-size-sm);
-    color: var(--text-color);
     display: flex;
     align-items: center;
+    font-size: var(--font-size-sm);
+    color: var(--text-color);
 }
 
 .dnevnik-lesson-icon {
-    width: 16px;
-    height: 16px;
-    background: url('path-to-homework-icon') no-repeat center;
-    /* Замените на реальный иконку */
-    margin-right: 8px;
+    font-family: "Font Awesome 5 Free"; /* Используем Font Awesome */
+    content: "\f02d"; /* Иконка книги (fa-book) */
+    margin-right: 6px;
+    color: var(--primary-color);
+    font-size: var(--font-size-base);
+    font-weight: 900; /* Для solid стиля */
 }
 
 .dnevnik-lesson__additional {
-    flex: 1;
-    /* Пустой блок, можно добавить стили по необходимости */
+    /* Пустой блок удален, так как не нужен */
+    display: none;
 }
 
 .page-empty {
     text-align: center;
     color: var(--text-gray);
     font-size: var(--font-size-base);
-    padding: 16px;
+    padding: 12px;
+    background: var(--background-gray);
+    border-radius: var(--border-radius);
 }
 
-/* ========== Анимации (из DemoStyles.css) ========== */
+/* ========== Анимации ========== */
 .dnevnik-lesson {
     opacity: 0;
     transform: translateY(10px);
-    animation: slideUp 0.6s ease-out forwards;
+    animation: slideUp 0.4s ease-out forwards;
 }
 
 @keyframes slideUp {
     from {
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateY(10px);
     }
-
     to {
         opacity: 1;
         transform: translateY(0);
     }
 }
 
-/* ========== Адаптивность (из Dashboard.css и DemoStyles.css) ========== */
+/* ========== Адаптивность ========== */
 @media (max-width: 1024px) {
     .dashboard-container {
         flex-direction: column;
     }
 
-    .selected-day-events {
-        flex: auto;
-        max-width: 100%;
+    .selected-day-events,
+    .main-calendar {
+        margin: 8px;
     }
 
     .main-calendar {
         max-width: 100%;
-        margin-top: 24px;
+        order: -1; /* Календарь сверху на мобильных */
     }
 }
 
 @media (max-width: 768px) {
-    .selected-day-events {
-        padding: 16px;
-    }
-
     .dnevnik-lesson {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
+        grid-template-columns: 40px 1fr; /* Упрощаем: номер + остальное в колонку */
+        gap: 4px;
     }
 
-    .dnevnik-lesson__number {
-        margin-right: 0;
-        margin-bottom: 4px;
+    .dnevnik-lesson__subject {
+        grid-column: 2;
     }
 
     .dnevnik-lesson__marks,
     .dnevnik-lesson__hometask {
+        grid-column: 2;
+    }
+
+    .dnevnik-mark__comment {
         margin-left: 0;
-        margin-top: 8px;
+        margin-top: 4px;
     }
 }
 
-@media (max-width: 480px) {
-    .events-title {
-        font-size: var(--font-size-xl);
-    }
-
-    .dnevnik-day__title {
-        font-size: var(--font-size-lg);
-    }
-}
-
-/* ========== Скроллбар (из Dashboard.css) ========== */
+/* ========== Скроллбар ========== */
 ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #f1f3f4;
-    border-radius: 4px;
+    background: var(--background-gray);
+    border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #dadce0;
-    border-radius: 4px;
+    background: var(--primary-color);
+    border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #bdc1c6;
+    background: var(--primary-dark);
 }
