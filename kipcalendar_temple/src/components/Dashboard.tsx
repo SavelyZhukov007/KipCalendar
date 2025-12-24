@@ -23,7 +23,7 @@ import { Event, PlanEvent, TaskEvent } from '../types/Event';
 import io from 'socket.io-client';
 import './Dashboard.css';
 
-const API_BASE_URL = 'http://127.0.0.1:5000';
+const API_BASE_URL = 'http://localhost:5000';
 
 const socket = io(API_BASE_URL);
 

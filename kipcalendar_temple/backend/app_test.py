@@ -13,7 +13,7 @@ from flask_socketio import SocketIO, emit
 app = Flask(__name__)
 CORS(
     app,
-    origins=["*"],
+    origins=["http://localhost:3000"],
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
     supports_credentials=True,
@@ -166,6 +166,13 @@ def init_db():
         """
         )
         db.commit()
+        # Проверяем наличие колонки email в таблице users (теперь после создания)
+        cur = db.cursor()
+        cur.execute("PRAGMA table_info(users)")
+        columns = [row[1] for row in cur.fetchall()]
+        if "email" not in columns:
+            cur.execute("ALTER TABLE users ADD COLUMN email TEXT")
+            db.commit()
 
 
 init_db()
@@ -204,15 +211,15 @@ def get_user_role(user_id):
 
 @app.route("/health", methods=["GET", "OPTIONS"])
 def health():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     return jsonify({"status": "ok"})
 
 
 @app.route("/register", methods=["POST", "OPTIONS"])
 def register():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     data = request.json
     username = data.get("username")
     password = data.get("password")
@@ -238,8 +245,8 @@ def register():
 
 @app.route("/login", methods=["POST", "OPTIONS"])
 def login():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     data = request.json
     username = data.get("username")
     password = data.get("password")
@@ -266,8 +273,8 @@ def login():
 
 @app.route("/logout", methods=["POST", "OPTIONS"])
 def logout():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -317,8 +324,8 @@ def switch_role():
 
 @app.route("/events", methods=["GET", "OPTIONS"])
 def get_events():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -350,8 +357,8 @@ def get_events():
 
 @app.route("/api/events/create-plan", methods=["POST", "OPTIONS"])
 def create_plan():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -397,8 +404,8 @@ def create_plan():
 
 @app.route("/api/events/create-task", methods=["POST", "OPTIONS"])
 def create_task():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -451,8 +458,8 @@ def create_task():
 
 @app.route("/event/<username>/<privacy>/<name>", methods=["GET", "OPTIONS"])
 def view_event(username, privacy, name):
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     event_id = int(name)
     db = get_db()
     cur = db.cursor()
@@ -514,8 +521,8 @@ def view_event(username, privacy, name):
 
 @app.route("/event/<privacy>/<name>", methods=["PUT", "DELETE", "OPTIONS"])
 def modify_event(privacy, name):
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -604,8 +611,8 @@ def modify_event(privacy, name):
 
 @app.route("/api/events/<int:event_id>/share", methods=["POST", "OPTIONS"])
 def share_event(event_id):
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -632,8 +639,8 @@ def share_event(event_id):
 
 @app.route("/api/shares/pending", methods=["GET", "OPTIONS"])
 def pending_shares():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -655,8 +662,8 @@ def pending_shares():
 
 @app.route("/api/shares/accept/<int:id>", methods=["POST", "OPTIONS"])
 def accept_share(id):
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -673,8 +680,8 @@ def accept_share(id):
 
 @app.route("/api/shares/decline/<int:id>", methods=["POST", "OPTIONS"])
 def decline_share(id):
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -701,8 +708,8 @@ def decline_share(id):
 
 @app.route("/api/users/get-by-role", methods=["GET", "OPTIONS"])
 def get_users_by_role():
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -718,8 +725,8 @@ def get_users_by_role():
 
 @app.route("/api/events/<int:event_id>/comments", methods=["GET", "POST", "OPTIONS"])
 def event_comments(event_id):
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -753,8 +760,8 @@ def event_comments(event_id):
 
 @app.route("/api/events/<int:event_id>/history", methods=["GET", "OPTIONS"])
 def event_history(event_id):
-    if request.method == "OPTIONS":
-        return "", 200
+    # if request.method == "OPTIONS":
+    #     return "", 200
     username = get_auth_user()
     if not username:
         return jsonify({"error": "Unauthorized"}), 401
@@ -798,3 +805,7 @@ check_expired_users()
 
 if __name__ == "__main__":
     socketio.run(app, port=5000, debug=True, host="0.0.0.0")
+"""
+kipcalendar_temple/backend/appvenv/Scripts/Activate.ps1
+py kipcalendar_temple/backend/app_test.py
+"""
