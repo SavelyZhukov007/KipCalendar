@@ -1,4 +1,3 @@
-# Backend file/ python script
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import sqlite3
