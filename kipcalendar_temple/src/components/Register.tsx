@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Button, TextField, Typography, CircularProgress, Select, MenuItem } from '@mui/material';
 import '../styles/DemoStyles.css';
-import logo from "../assets_logo/kip1.jpeg"
+import logo from "../assets_logo/kip1.png"
 
 const Register: React.FC = () => {
   const [username, setUsername] = useState('');

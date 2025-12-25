@@ -21,11 +21,12 @@ CORS(
 app.config["MAIL_SERVER"] = (
     "smtp.gmail.com"  # Пример для Gmail; замените на ваш SMTP-сервер
 )
+password = "PLACE YOUR PASSWORD HERE"
 app.config["MAIL_PORT"] = 587  # Или 465 для SSL
 app.config["MAIL_USE_TLS"] = True  # Или MAIL_USE_SSL = True
 app.config["MAIL_USERNAME"] = "savely.zhukov.1583@gmail.com"  # Ваш email
 app.config["MAIL_PASSWORD"] = (
-    "abrmpqybsyvsqbti"  # App password для Gmail (не основной пароль)
+    password  # App password для Gmail (не основной пароль)
 )
 app.config["MAIL_DEFAULT_SENDER"] = "savely.zhukov.1583@gmail.com"  # От кого отправлять
 mail = Mail(app)  # Инициализация Flask-Mail
