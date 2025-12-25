@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Typography, Container, Button, Box } from '@mui/material';
+import { Typography, Button, Box, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Select, MenuItem } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import './Profile.css';
 
 const Profile: React.FC = () => {
+    const [userId, setUserId] = useState('');
+    const [email, setEmail] = useState('');
     const [roles, setRoles] = useState<string[]>([]);
     const [currentRole, setCurrentRole] = useState('');
+    const [openOrgDialog, setOpenOrgDialog] = useState(false);
+    const [orgName, setOrgName] = useState('');
+    const [orgShortName, setOrgShortName] = useState('');
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -14,8 +19,10 @@ const Profile: React.FC = () => {
             navigate('/');
             return;
         }
+
         const headers: HeadersInit = { 'Authorization': token };
-        const fetchRole = async () => {
+
+        const fetchProfile = async () => {
             try {
                 const res = await fetch('http://127.0.0.1:5000/role', { headers });
                 if (res.ok) {
@@ -23,11 +30,15 @@ const Profile: React.FC = () => {
                     setRoles(data.roles || []);
                     setCurrentRole(data.currentRole || '');
                 }
+
+                // Получаем user_id из JWT токена
+                const tokenData = JSON.parse(atob(token.split('.')[1]));
+                setUserId(tokenData.user_id || 'N/A');
             } catch (error: any) {
-                console.error('Ошибка загрузки роли');
+                console.error('Ошибка загрузки профиля');
             }
         };
-        fetchRole();
+        fetchProfile();
     }, [navigate]);
 
     const handleLogout = async () => {
@@ -42,24 +53,40 @@ const Profile: React.FC = () => {
         }
     };
 
-    const handleSwitchRole = async () => {
-        const other = roles.find(r => r !== currentRole);
-        if (!other) return;
+    const handleCreateOrg = async () => {
+        if (!orgName.trim()) return alert('Введите название');
+
         const token = localStorage.getItem('token');
         if (!token) return;
-        const headers: HeadersInit = { 'Content-Type': 'application/json', 'Authorization': token };
+
         try {
-            const res = await fetch('http://127.0.0.1:5000/switch-role', {
+            const res = await fetch('http://127.0.0.1:5000/api/organizations/create', {
                 method: 'POST',
-                headers,
-                body: JSON.stringify({ newRole: other })
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': token
+                },
+                body: JSON.stringify({
+                    name: orgName,
+                    short_name: orgShortName,
+                    type: 'education'
+                })
             });
+
             if (res.ok) {
-                setCurrentRole(other);
+                alert('Организация создана!');
+                setOpenOrgDialog(false);
+                setOrgName('');
+                setOrgShortName('');
             }
-        } catch (error: any) {
-            alert('Ошибка переключения роли');
+        } catch (error) {
+            alert('Ошибка создания организации');
         }
+    };
+
+    const copyToClipboard = (text: string) => {
+        navigator.clipboard.writeText(text);
+        alert('Скопировано: ' + text);
     };
 
     return (
@@ -67,7 +94,12 @@ const Profile: React.FC = () => {
             <div className="profile-header">
                 <Typography variant="h4" className="profile-title">Профиль</Typography>
             </div>
+
             <div className="profile-info">
+                <div className="profile-info-item">
+                    <strong>User ID:</strong> {userId}
+                    <Button size="small" onClick={() => copyToClipboard(userId)}>Копировать</Button>
+                </div>
                 <div className="profile-info-item">
                     <strong>Логин:</strong> {localStorage.getItem('username') || 'Неизвестно'}
                 </div>
@@ -75,52 +107,55 @@ const Profile: React.FC = () => {
                     <strong>Роль:</strong> {currentRole || 'Не выбрана'}
                 </div>
             </div>
-            <div className="role-blocks-container">
-                <Box className="role-block">
-                    <div className="role-block-title">Студент</div>
-                    <div className="role-block-actions">
-                        <Button className="profile-button profile-button-secondary" onClick={handleLogout}>Выйти</Button>
-                    </div>
-                </Box>
-                <Box className="role-block">
-                    <div className="role-block-title">Преподаватель</div>
-                    <div className="role-block-actions">
-                        <Button className="profile-button profile-button-secondary" onClick={handleLogout}>Выйти</Button>
-                    </div>
-                </Box>
-                <Box className="role-block">
-                    <div className="role-block-title">Администратор</div>
-                    <div className="role-block-actions">
-                        <Button className="profile-button profile-button-secondary" onClick={handleLogout}>Выйти</Button>
-                    </div>
-                </Box>
+
+            <div className="profile-actions">
+                <Button
+                    className="profile-button profile-button-primary"
+                    onClick={() => setOpenOrgDialog(true)}
+                >
+                    Создать организацию
+                </Button>
+                <Button
+                    className="profile-button profile-button-secondary"
+                    onClick={() => navigate('/kipswift')}
+                >
+                    Мессенджер
+                </Button>
+                <Button
+                    className="profile-button profile-button-secondary"
+                    onClick={handleLogout}
+                >
+                    Выход
+                </Button>
             </div>
-            {roles.length > 1 && (
-                <div className="profile-actions">
-                    <Button 
-                        className="profile-button profile-button-primary" 
-                        onClick={handleSwitchRole}
-                    >
-                        Переключить роль
-                    </Button>
-                    <Button 
-                        className="profile-button profile-button-secondary" 
-                        onClick={handleLogout}
-                    >
-                        Выход
-                    </Button>
-                </div>
-            )}
-            {roles.length <= 1 && (
-                <div className="profile-actions">
-                    <Button 
-                        className="profile-button profile-button-secondary" 
-                        onClick={handleLogout}
-                    >
-                        Выход
-                    </Button>
-                </div>
-            )}
+
+            {/* Диалог создания организации */}
+            <Dialog open={openOrgDialog} onClose={() => setOpenOrgDialog(false)}>
+                <DialogTitle>Создание организации</DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" gutterBottom>
+                        Тип: Образовательное учреждение (Школа/СПО/Университет)
+                    </Typography>
+                    <TextField
+                        label="Полное название"
+                        value={orgName}
+                        onChange={(e) => setOrgName(e.target.value)}
+                        fullWidth
+                        margin="normal"
+                    />
+                    <TextField
+                        label="Сокращенное название (опционально)"
+                        value={orgShortName}
+                        onChange={(e) => setOrgShortName(e.target.value)}
+                        fullWidth
+                        margin="normal"
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setOpenOrgDialog(false)}>Отмена</Button>
+                    <Button onClick={handleCreateOrg} variant="contained">Создать</Button>
+                </DialogActions>
+            </Dialog>
         </div>
     );
 };

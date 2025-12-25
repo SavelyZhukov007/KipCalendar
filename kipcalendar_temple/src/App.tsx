@@ -15,6 +15,7 @@ import Success from './components/Success';
 import Dashboard from './components/Dashboard';
 import Profile from './components/Profile';
 import SchedulePage from './components/Schedule';
+import Kipswift from "./components/Kipswift";
 import './App.css';
 
 const theme = createTheme();
@@ -64,6 +65,8 @@ function App() {
             <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} /> {/* Календарь */}
             <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} /> {/* Новый профиль */}
             <Route path="/schedule" element={<PrivateRoute><SchedulePage /></PrivateRoute>} /> {/* Расписание */}
+            <Route path="/kipswift" element={<PrivateRoute><Kipswift /></PrivateRoute>} />
+            {/* <Route path="/kipswift" element={<Kipswift />} /> */}
           </Routes>
         </Router>
       </BackendContext.Provider>
