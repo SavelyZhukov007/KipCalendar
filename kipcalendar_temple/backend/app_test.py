@@ -1,3 +1,8 @@
+# starting commands
+"""
+kipcalendar_temple/backend/appvenv/Scripts/Activate.ps1
+py kipcalendar_temple/backend/app_test.py
+"""
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import sqlite3
@@ -1512,7 +1517,3 @@ check_expired_users()
 
 if __name__ == "__main__":
     socketio.run(app, port=5000, debug=True, host="0.0.0.0")
-"""
-kipcalendar_temple/backend/appvenv/Scripts/Activate.ps1
-py kipcalendar_temple/backend/app_test.py
-"""
