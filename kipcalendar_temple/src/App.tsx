@@ -1,4 +1,9 @@
 // App.tsx
+/*
+  AUTHORS:
+    SavelyZhukov007
+    tWistyik
+*/
 import React, { useEffect, useState, createContext, useContext, ReactElement } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
