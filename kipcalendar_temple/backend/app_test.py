@@ -27,7 +27,7 @@ CORS(
 app.config["MAIL_SERVER"] = (
     "smtp.gmail.com"  # Пример для Gmail; замените на ваш SMTP-сервер
 )
-password = "PLACE YOUR PASSWORD HERE"
+password = "meqx mjtp zgxi padk"  # Ваш app password для Gmail
 app.config["MAIL_PORT"] = 587  # Или 465 для SSL
 app.config["MAIL_USE_TLS"] = True  # Или MAIL_USE_SSL = True
 app.config["MAIL_USERNAME"] = "savely.zhukov.1583@gmail.com"  # Ваш email
@@ -78,6 +78,9 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             email TEXT,
+            email_verified BOOLEAN DEFAULT 0,
+            verification_code TEXT,
+            verification_expires INTEGER,
             roles TEXT NOT NULL,
             current_role TEXT NOT NULL,
             logout_timestamp INTEGER,
@@ -420,85 +423,200 @@ def health():
     return jsonify({"status": "ok"})
 
 
+def generate_verification_code():
+    return "".join([str(secrets.randbelow(10)) for _ in range(6)])
+
+
+def get_auth_user():
+    token = request.headers.get("Authorization")
+    if token:
+        try:
+            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            return data.get("user_id")  # ИЗМЕНЕНО: было username
+        except:
+            pass
+    return None
+
+
 @app.route("/register", methods=["POST", "OPTIONS"])
 def register():
     if request.method == "OPTIONS":
         return "", 200
+
     data = request.json
     username = data.get("username")
     password = data.get("password")
-    email = data.get("email", "")
-    role = data.get("role", "student")
+    email = data.get("email")
 
-    if not username or not password:
-        return jsonify({"error": "Missing fields"}), 400
+    if not username or not password or not email:
+        return jsonify({"error": "All fields required"}), 400
 
     db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT * FROM users WHERE username = ?", (username,))
-    if cur.fetchone():
-        return jsonify({"error": "Username exists"}), 400
 
-    # Генерируем уникальный 16-значный ID
+    # Проверка существующих
+    cur.execute(
+        "SELECT * FROM users WHERE username = ? OR email = ?", (username, email)
+    )
+    if cur.fetchone():
+        return jsonify({"error": "Username or email exists"}), 400
+
+    # Генерация ID и кода
     while True:
         user_id = "".join([str(secrets.randbelow(10)) for _ in range(16)])
         cur.execute("SELECT id FROM users WHERE id = ?", (user_id,))
         if not cur.fetchone():
             break
 
+    code = generate_verification_code()
+    expires = int(time.time()) + 600  # 10 минут
+
     hashed = hash_password(password)
     cur.execute(
-        "INSERT INTO users (id, username, password_hash, email, roles, current_role) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, username, hashed, email, json.dumps([role]), role),
+        """
+        INSERT INTO users (id, username, password_hash, email, verification_code, 
+                          verification_expires, roles, current_role)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """,
+        (
+            user_id,
+            username,
+            hashed,
+            email,
+            code,
+            expires,
+            json.dumps(["student"]),
+            "student",
+        ),
     )
     db.commit()
 
-    if email:
-        subject = "Добро пожаловать в KipCalendar!"
-        body = f"Здравствуйте, {username}!\n\nВаш User ID: {user_id}\nВы успешно зарегистрировались в KipCalendar.\nВаша роль: {role}\n\nСпасибо за регистрацию!"
-        html_body = f"""
-        <html>
-            <body style="font-family: Arial, sans-serif;">
-                <h2 style="color: #6366f1;">Добро пожаловать в KipCalendar!</h2>
-                <p>Здравствуйте, <strong>{username}</strong>!</p>
-                <p><strong>Ваш User ID:</strong> <code>{user_id}</code></p>
-                <p>Вы успешно зарегистрировались в системе.</p>
-                <p>Ваша роль: <strong>{role}</strong></p>
-                <p>Спасибо за регистрацию!</p>
-            </body>
-        </html>
-        """
-        send_email(email, subject, body, html_body)
+    # Отправка email
+    subject = "KipCalendar - Код подтверждения"
+    body = f"Ваш код: {code}\nДействителен 10 минут."
+    html_body = f"""
+    <html><body style="font-family: Arial;">
+        <h2 style="color: #6366f1;">Добро пожаловать в KipCalendar!</h2>
+        <p>Ваш код подтверждения:</p>
+        <h1 style="color: #6366f1; letter-spacing: 5px;">{code}</h1>
+        <p>Действителен 10 минут.</p>
+        <p>Ваш User ID: <code>{user_id}</code></p>
+    </body></html>
+    """
+    send_email(email, subject, body, html_body)
 
-    return jsonify({"message": "Registered", "user_id": user_id})
+    return jsonify({"message": "Code sent", "email": email})
+
+
+@app.route("/verify", methods=["POST", "OPTIONS"])
+def verify_email():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    data = request.json
+    email = data.get("email")
+    code = data.get("code")
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT * FROM users WHERE email = ?", (email,))
+    user = cur.fetchone()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user["email_verified"]:
+        return jsonify({"error": "Already verified"}), 400
+
+    if user["verification_code"] != code:
+        return jsonify({"error": "Invalid code"}), 400
+
+    if user["verification_expires"] < int(time.time()):
+        return jsonify({"error": "Code expired"}), 400
+
+    cur.execute("UPDATE users SET email_verified = 1 WHERE email = ?", (email,))
+    db.commit()
+
+    # Генерация токена
+    token = jwt.encode(
+        {
+            "user_id": user["id"],
+            "username": user["username"],
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(days=30),
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+
+    return jsonify({"token": token, "user_id": user["id"]})
+
+
+@app.route("/resend-code", methods=["POST", "OPTIONS"])
+def resend_code():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    data = request.json
+    email = data.get("email")
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT * FROM users WHERE email = ?", (email,))
+    user = cur.fetchone()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user["email_verified"]:
+        return jsonify({"error": "Already verified"}), 400
+
+    code = generate_verification_code()
+    expires = int(time.time()) + 600
+
+    cur.execute(
+        "UPDATE users SET verification_code = ?, verification_expires = ? WHERE email = ?",
+        (code, expires, email),
+    )
+    db.commit()
+
+    subject = "KipCalendar - Новый код"
+    body = f"Ваш новый код: {code}\nДействителен 10 минут."
+    send_email(email, subject, body)
+
+    return jsonify({"message": "Code sent"})
 
 
 @app.route("/login", methods=["POST", "OPTIONS"])
 def login():
     if request.method == "OPTIONS":
         return "", 200
+
     data = request.json
     username = data.get("username")
     password = data.get("password")
+
     db = get_db()
     cur = db.cursor()
     cur.execute("SELECT * FROM users WHERE username = ?", (username,))
     user = cur.fetchone()
-    if user and user["password_hash"] == hash_password(password):
-        cur.execute(
-            "UPDATE users SET logout_timestamp = NULL WHERE id = ?", (user["id"],)
-        )
-        db.commit()
-        token = jwt.encode(
-            {
-                "username": username,
-                "exp": datetime.datetime.utcnow() + datetime.timedelta(days=1),
-            },
-            SECRET_KEY,
-            algorithm="HS256",
-        )
-        return jsonify({"token": token})
-    return jsonify({"error": "Invalid credentials"}), 401
+
+    if not user or user["password_hash"] != hash_password(password):
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    if not user["email_verified"]:
+        return jsonify({"error": "Email not verified", "email": user["email"]}), 403
+
+    token = jwt.encode(
+        {
+            "user_id": user["id"],
+            "username": user["username"],
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(days=30),
+        },
+        SECRET_KEY,
+        algorithm="HS256",
+    )
+
+    return jsonify({"token": token, "user_id": user["id"]})
 
 
 @app.route("/logout", methods=["POST", "OPTIONS"])

@@ -20,7 +20,7 @@ const Register: React.FC = () => {
   ));
 
   useEffect(() => {
-      document.body.classList.add('animate');
+    document.body.classList.add('animate');
 
     return () => {
       document.body.classList.remove('animate');
@@ -28,6 +28,11 @@ const Register: React.FC = () => {
   }, []);
 
   const handleRegister = async () => {
+    if (!email.includes('@')) {
+      alert('Введите корректный email');
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch('http://localhost:5000/register', {
@@ -35,17 +40,15 @@ const Register: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password, role, email }),
       });
+
       if (res.ok) {
-        localStorage.setItem('hasRegistered', 'true');
-        localStorage.setItem('savedUsername', username);
-        localStorage.setItem('savedPassword', password);
-        navigate('/success');
+        navigate('/verification', { state: { email } });
       } else {
         const error = await res.json();
         alert(error.error || 'Ошибка регистрации');
       }
     } catch (error: any) {
-/*      alert('Ошибка соединения с бэкендом: ' + (error.message || 'Неизвестная ошибка'));*/
+      alert('Ошибка соединения');
     } finally {
       setLoading(false);
     }
@@ -62,32 +65,32 @@ const Register: React.FC = () => {
           <Typography variant="h4" gutterBottom sx={{ color: 'var(--text-light)', textAlign: 'center' }}>
             Регистрация
           </Typography>
-            <TextField
-              label="Логин"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              fullWidth
-              margin="normal"
-              InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
-            />
-            <TextField
-              label="Электронная почта"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              fullWidth
-              margin="normal"
-              InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
-            />
-            <TextField
-              label="Пароль"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              fullWidth
-              margin="normal"
-              InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
-            />
+          <TextField
+            label="Логин"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            fullWidth
+            margin="normal"
+            InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+          />
+          <TextField
+            label="Электронная почта"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            fullWidth
+            margin="normal"
+            InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+          />
+          <TextField
+            label="Пароль"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            fullWidth
+            margin="normal"
+            InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+          />
           <Select value={role} onChange={(e) => setRole(e.target.value)} fullWidth margin="dense">
             <MenuItem value="student">Студент</MenuItem>
             <MenuItem value="teacher">Преподаватель</MenuItem>

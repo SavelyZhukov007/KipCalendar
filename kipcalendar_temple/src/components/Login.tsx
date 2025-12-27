@@ -29,7 +29,7 @@ const Login: React.FC = () => {
       setPassword(savedPassword);
     }
 
-      document.body.classList.add('animate');
+    document.body.classList.add('animate');
 
     return () => {
       document.body.classList.remove('animate');
@@ -48,13 +48,18 @@ const Login: React.FC = () => {
         const { token } = await res.json();
         localStorage.setItem('token', token);
         setFadeOut(true);
+      } else if (res.status === 403) {
+        const error = await res.json();
+        alert('Email не подтвержден. Перенаправляем...');
+        navigate('/verification', { state: { email: error.email } });
+        setLoading(false);
       } else {
         const error = await res.json();
         alert(error.error || 'Ошибка входа');
         setLoading(false);
       }
     } catch (error) {
-/*      alert('Ошибка соединения с бэкендом');*/
+      /*      alert('Ошибка соединения с бэкендом');*/
       setLoading(false);
     }
   };

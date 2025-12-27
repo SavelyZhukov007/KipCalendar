@@ -3,6 +3,7 @@
   AUTHORS:
     SavelyZhukov007
     tWistyik
+    Ivan Povh
 */
 import React, { useEffect, useState, createContext, useContext, ReactElement } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -16,6 +17,7 @@ import Dashboard from './components/Dashboard';
 import Profile from './components/Profile';
 import SchedulePage from './components/Schedule';
 import Kipswift from "./components/Kipswift";
+import Verification from './components/Verification';
 import './App.css';
 
 const theme = createTheme();
@@ -66,6 +68,7 @@ function App() {
             <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} /> {/* Новый профиль */}
             <Route path="/schedule" element={<PrivateRoute><SchedulePage /></PrivateRoute>} /> {/* Расписание */}
             <Route path="/kipswift" element={<PrivateRoute><Kipswift /></PrivateRoute>} />
+            <Route path="/verification" element={<Verification />} />
             {/* <Route path="/kipswift" element={<Kipswift />} /> */}
           </Routes>
         </Router>
