@@ -94,7 +94,7 @@ body {
     color: var(--text-color);
     background: var(--background-light);
     line-height: 1.6;
-    overflow-x: hidden;
+    /* overflow-x: hidden; */
     min-height: 100vh;
 }
 

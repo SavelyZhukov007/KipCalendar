@@ -15,7 +15,7 @@
     padding: 0;
     background: linear-gradient(135deg, #f0f2f5 0%, #e4e6e9 100%);
     min-height: 100vh;
-    overflow-x: hidden;
+    /* overflow-x: hidden; */
 }
 
 /* ========== Хедер (Нео-стиль) ========== */
@@ -186,14 +186,13 @@
 }
 
 .react-calendar__month-view__weekdays__weekday {
-    color: #6b7280 !important;
-    font-weight: 600 !important;
-    font-size: 14px !important;
-    text-align: center !important;
-    padding: 12px 0 !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.5px !important;
-    background: none !important;
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 14px;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: none;
 }
 
 .react-calendar__month-view__weekdays__weekday abbr {
@@ -580,7 +579,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
-    -webkit-line-clamp: 2;
+    /* -webkit-line-clamp: 2; */
     -webkit-box-orient: vertical;
     line-height: 1.5;
 }
@@ -895,21 +894,21 @@
 }
 
 .MuiTextField-root .MuiInputBase-root {
-    background: rgba(255, 255, 255, 0.9) !important;
-    border-radius: 12px !important;
-    border: 1px solid rgba(209, 213, 219, 0.3) !important;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 12px;
+    border: 1px solid rgba(209, 213, 219, 0.3);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow:
         inset 0 2px 4px rgba(0, 0, 0, 0.05),
-        0 1px 0 rgba(255, 255, 255, 0.8) !important;
+        0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .MuiTextField-root .MuiInputBase-root:hover {
-    background: rgba(255, 255, 255, 1) !important;
-    border-color: rgba(59, 130, 246, 0.5) !important;
+    background: rgba(255, 255, 255, 1);
+    border-color: rgba(59, 130, 246, 0.5);
     box-shadow:
         inset 0 2px 8px rgba(0, 0, 0, 0.05),
-        0 2px 0 rgba(255, 255, 255, 0.9) !important;
+        0 2px 0 rgba(255, 255, 255, 0.9);
 }
 
 .MuiTextField-root .MuiInputBase-root.Mui-focused {
@@ -926,13 +925,6 @@
     font-size: 15px !important;
     font-weight: 500 !important;
     padding: 14px 16px !important;
-}
-
-.MuiTextField-root .MuiInputLabel-root {
-    color: #6b7280 !important;
-    font-size: 15px !important;
-    font-weight: 600 !important;
-    transform: translate(14px, 16px) scale(1);
 }
 
 .MuiTextField-root .MuiInputLabel-root.Mui-focused {
