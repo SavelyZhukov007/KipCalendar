@@ -38,6 +38,97 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 SECRET_KEY = "your_secret_key_change_me"
 DATABASE = "kipcalendar.db"
+# ============ HELPER FUNCTIONS ============
+
+
+def generate_uuid():
+    """Генерация UUID (16-значный ID)"""
+    import secrets
+
+    while True:
+        new_id = "".join([str(secrets.randbelow(10)) for _ in range(16)])
+        # Проверяем уникальность
+        db = get_db()
+        cur = db.cursor()
+        # Проверяем во всех основных таблицах
+        cur.execute("SELECT id FROM users WHERE id = ?", (new_id,))
+        if not cur.fetchone():
+            return new_id
+
+
+def create_notification(user_id, notification_type, content):
+    """Создание уведомления"""
+    db = get_db()
+    cur = db.cursor()
+    notif_id = generate_uuid()
+    timestamp = int(time.time())
+
+    cur.execute(
+        """INSERT INTO notifications (id, user_id, type, content, timestamp, is_read, sent_to_telegram)
+           VALUES (?, ?, ?, ?, ?, 0, 0)""",
+        (notif_id, user_id, notification_type, content, timestamp),
+    )
+    db.commit()
+
+    # Emit через SocketIO для real-time
+    socketio.emit(
+        "notification",
+        {
+            "id": notif_id,
+            "type": notification_type,
+            "content": content,
+            "timestamp": timestamp,
+        },
+        room=str(user_id),
+    )
+
+    return notif_id
+
+
+def log_audit(user_id, action, entity_id=None, old_value=None, new_value=None):
+    """Логирование действий пользователя"""
+    db = get_db()
+    cur = db.cursor()
+    audit_id = generate_uuid()
+
+    cur.execute(
+        """INSERT INTO audit_logs (id, user_id, action, entity_id, old_value, new_value, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (audit_id, user_id, action, entity_id, old_value, new_value, int(time.time())),
+    )
+    db.commit()
+
+
+def check_organization_permission(user_id, organization_id, required_role):
+    """Проверка прав пользователя в организации"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        """SELECT roles FROM organization_members 
+           WHERE organization_id = ? AND user_id = ?""",
+        (organization_id, user_id),
+    )
+    member = cur.fetchone()
+
+    if not member:
+        return False
+
+    roles = json.loads(member["roles"])
+    return required_role in roles or "admin" in roles
+
+
+def get_user_organizations(user_id):
+    """Получить список организаций пользователя"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        """SELECT o.*, om.roles, om.current_role 
+           FROM organizations o
+           JOIN organization_members om ON o.id = om.organization_id
+           WHERE om.user_id = ?""",
+        (user_id,),
+    )
+    return [dict(row) for row in cur.fetchall()]
 
 
 def get_db():
@@ -73,11 +164,12 @@ def init_db():
         db = get_db()
         db.executescript(
             """
+        -- Users table (с UUID)
         CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,  -- ИЗМЕНЕНО: было INTEGER, стало TEXT
+            id TEXT PRIMARY KEY,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            email TEXT,
+            email TEXT UNIQUE NOT NULL,
             email_verified BOOLEAN DEFAULT 0,
             verification_code TEXT,
             verification_expires INTEGER,
@@ -86,297 +178,308 @@ def init_db():
             logout_timestamp INTEGER,
             first_name TEXT,
             last_name TEXT,
-            middle_name TEXT
+            middle_name TEXT,
+            telegram_id TEXT UNIQUE,
+            created_at INTEGER DEFAULT (strftime('%s', 'now'))
         );
 
-        CREATE TABLE IF NOT EXISTS buildings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            address TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS rooms (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            building_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            max_groups INTEGER NOT NULL DEFAULT 1,
-            FOREIGN KEY(building_id) REFERENCES buildings(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            specialty TEXT NOT NULL,
-            course INTEGER NOT NULL,
-            group_number INTEGER NOT NULL,
-            admission_year INTEGER NOT NULL,
-            type TEXT,
-            curator_id INTEGER,
-            building_id INTEGER,
-            FOREIGN KEY(curator_id) REFERENCES users(id),
-            FOREIGN KEY(building_id) REFERENCES buildings(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS user_groups (
-            user_id INTEGER,
-            group_id INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id),
-            FOREIGN KEY(group_id) REFERENCES groups(id),
-            PRIMARY KEY(user_id, group_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS subjects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            code TEXT,
-            description TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS group_subjects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL,
-            subject_id INTEGER NOT NULL,
-            total_hours INTEGER NOT NULL,
-            FOREIGN KEY(group_id) REFERENCES groups(id),
-            FOREIGN KEY(subject_id) REFERENCES subjects(id),
-            UNIQUE(group_id, subject_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS teacher_subjects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            teacher_id INTEGER NOT NULL,
-            subject_id INTEGER NOT NULL,
-            FOREIGN KEY(teacher_id) REFERENCES users(id),
-            FOREIGN KEY(subject_id) REFERENCES subjects(id),
-            UNIQUE(teacher_id, subject_id)
-        );
-
-        CREATE TABLE IF NOT EXISTS teacher_availability (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            teacher_id INTEGER NOT NULL,
-            day_of_week INTEGER NOT NULL,
-            available BOOLEAN NOT NULL DEFAULT 1,
-            notes TEXT,
-            FOREIGN KEY(teacher_id) REFERENCES users(id),
-            UNIQUE(teacher_id, day_of_week)
-        );
-
-        CREATE TABLE IF NOT EXISTS terms (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            start_date TEXT NOT NULL,
-            end_date TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS schedule_templates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL,
-            term_id INTEGER NOT NULL,
-            week_type TEXT NOT NULL CHECK (week_type IN ('even', 'odd')),
-            day_of_week INTEGER NOT NULL,
-            FOREIGN KEY(group_id) REFERENCES groups(id),
-            FOREIGN KEY(term_id) REFERENCES terms(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS lessons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            template_id INTEGER NOT NULL,
-            subject_id INTEGER NOT NULL,
-            teacher_id INTEGER NOT NULL,
-            room_id INTEGER NOT NULL,
-            start_time TEXT NOT NULL,
-            end_time TEXT NOT NULL,
-            homework TEXT,
-            FOREIGN KEY(template_id) REFERENCES schedule_templates(id),
-            FOREIGN KEY(subject_id) REFERENCES subjects(id),
-            FOREIGN KEY(teacher_id) REFERENCES users(id),
-            FOREIGN KEY(room_id) REFERENCES rooms(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS actual_lessons (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lesson_id INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            comments TEXT,
-            FOREIGN KEY(lesson_id) REFERENCES lessons(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS marks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            actual_lesson_id INTEGER NOT NULL,
-            student_id INTEGER NOT NULL,
-            mark1 TEXT,
-            mark2 TEXT,
-            absence_type TEXT CHECK (absence_type IN ('Н', 'НБ', NULL)),
-            comment TEXT CHECK (LENGTH(comment) BETWEEN 1 AND 255),
-            timestamp INTEGER,
-            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
-            FOREIGN KEY(student_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS attachments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            lesson_id INTEGER,
-            actual_lesson_id INTEGER,
-            file_path TEXT NOT NULL,
-            description TEXT,
-            timestamp INTEGER,
-            FOREIGN KEY(lesson_id) REFERENCES lessons(id),
-            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id),
-            CHECK (lesson_id IS NOT NULL OR actual_lesson_id IS NOT NULL)
-        );
-
-        CREATE TABLE IF NOT EXISTS events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            date TEXT NOT NULL,
-            time TEXT NOT NULL,
-            description TEXT,
-            event_type TEXT NOT NULL,
-            content TEXT,
-            end_date TEXT,
-            end_time TEXT,
-            recurring_options TEXT,
-            subtasks TEXT,
-            privacy TEXT NOT NULL,
-            password_hash TEXT,
-            expiration_days INTEGER,
-            version INTEGER DEFAULT 0,
-            FOREIGN KEY(owner_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS shared_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            accepted BOOLEAN,
-            reason TEXT,
-            forbid_edit BOOLEAN,
-            allow_comments BOOLEAN,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS event_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            field TEXT,
-            old_value TEXT,
-            new_value TEXT,
-            timestamp INTEGER,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS comments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            timestamp INTEGER,
-            FOREIGN KEY(event_id) REFERENCES events(id),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            content TEXT NOT NULL,
-            timestamp INTEGER,
-            read BOOLEAN DEFAULT FALSE,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            action TEXT NOT NULL,
-            entity_id INTEGER,
-            old_value TEXT,
-            new_value TEXT,
-            timestamp INTEGER,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
+        -- Organizations
         CREATE TABLE IF NOT EXISTS organizations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             short_name TEXT,
-            type TEXT NOT NULL CHECK (type IN ('education')),
-            created_at INTEGER,
-            created_by INTEGER,
+            type TEXT NOT NULL DEFAULT 'education',
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            created_by TEXT,
             FOREIGN KEY(created_by) REFERENCES users(id)
         );
 
+        -- Organization members
         CREATE TABLE IF NOT EXISTS organization_members (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            organization_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
             roles TEXT NOT NULL,
             current_role TEXT NOT NULL,
-            joined_at INTEGER,
+            joined_at INTEGER DEFAULT (strftime('%s', 'now')),
             profile_data TEXT,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id),
-            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             UNIQUE(organization_id, user_id)
         );
 
+        -- Invitations
         CREATE TABLE IF NOT EXISTS invitations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            organization_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
             role TEXT NOT NULL,
             token TEXT UNIQUE NOT NULL,
-            created_at INTEGER,
-            expires_at INTEGER,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            expires_at INTEGER NOT NULL,
             max_uses INTEGER DEFAULT -1,
             uses INTEGER DEFAULT 0,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id)
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
         );
 
+        -- Buildings
+        CREATE TABLE IF NOT EXISTS buildings (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            address TEXT,
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+        );
+
+        -- Rooms
+        CREATE TABLE IF NOT EXISTS rooms (
+            id TEXT PRIMARY KEY,
+            building_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            max_groups INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY(building_id) REFERENCES buildings(id) ON DELETE CASCADE
+        );
+
+        -- Groups
+        CREATE TABLE IF NOT EXISTS groups (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            specialty TEXT,
+            course INTEGER,
+            group_number INTEGER,
+            admission_year INTEGER,
+            type TEXT,
+            curator_id TEXT,
+            building_id TEXT,
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+            FOREIGN KEY(curator_id) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY(building_id) REFERENCES buildings(id) ON DELETE SET NULL
+        );
+
+        -- User-Group relationship
+        CREATE TABLE IF NOT EXISTS user_groups (
+            user_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            PRIMARY KEY(user_id, group_id)
+        );
+
+        -- Subjects
+        CREATE TABLE IF NOT EXISTS subjects (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            code TEXT,
+            description TEXT,
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+        );
+
+        -- Group-Subject relationship (with teacher and hours)
+        CREATE TABLE IF NOT EXISTS group_subjects (
+            id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            teacher_id TEXT,
+            total_hours INTEGER NOT NULL,
+            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+            FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE SET NULL,
+            UNIQUE(group_id, subject_id)
+        );
+
+        -- Schedule: Weekly lessons template
+        CREATE TABLE IF NOT EXISTS lessons (
+            id TEXT PRIMARY KEY,
+            group_id TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            teacher_id TEXT NOT NULL,
+            room_id TEXT,
+            day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            lesson_type TEXT,
+            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+            FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+            FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE SET NULL
+        );
+
+        -- Actual lessons (specific date instances)
+        CREATE TABLE IF NOT EXISTS actual_lessons (
+            id TEXT PRIMARY KEY,
+            lesson_id TEXT NOT NULL,
+            date TEXT NOT NULL,
+            topic TEXT,
+            homework TEXT,
+            notes TEXT,
+            FOREIGN KEY(lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+        );
+
+        -- Marks/Grades
+        CREATE TABLE IF NOT EXISTS marks (
+            id TEXT PRIMARY KEY,
+            actual_lesson_id TEXT NOT NULL,
+            student_id TEXT NOT NULL,
+            value TEXT,
+            comment TEXT,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
+            FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Attendance
+        CREATE TABLE IF NOT EXISTS attendance (
+            id TEXT PRIMARY KEY,
+            actual_lesson_id TEXT NOT NULL,
+            student_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('present', 'absent', 'late')),
+            note TEXT,
+            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
+            FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Events (Calendar)
+        CREATE TABLE IF NOT EXISTS events (
+            id TEXT PRIMARY KEY,
+            owner_id TEXT NOT NULL,
+            organization_id TEXT,
+            title TEXT NOT NULL,
+            description TEXT,
+            date TEXT NOT NULL,
+            time TEXT NOT NULL,
+            end_date TEXT,
+            end_time TEXT,
+            event_type TEXT NOT NULL CHECK(event_type IN ('plan', 'task', 'lesson')),
+            content TEXT,
+            subtasks TEXT,
+            recurring_options TEXT,
+            privacy TEXT NOT NULL DEFAULT 'private',
+            password_hash TEXT,
+            expiration_days INTEGER,
+            version INTEGER DEFAULT 0,
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE SET NULL
+        );
+
+        -- Shared events
+        CREATE TABLE IF NOT EXISTS shared_events (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            accepted BOOLEAN,
+            reason TEXT,
+            forbid_edit BOOLEAN DEFAULT 0,
+            allow_comments BOOLEAN DEFAULT 0,
+            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Event history
+        CREATE TABLE IF NOT EXISTS event_history (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            field TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Comments on events
+        CREATE TABLE IF NOT EXISTS comments (
+            id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Chats
         CREATE TABLE IF NOT EXISTS chats (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL CHECK (type IN ('direct', 'group')),
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL CHECK(type IN ('direct', 'group')),
             name TEXT,
-            created_at INTEGER,
-            organization_id INTEGER,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id)
+            created_at INTEGER DEFAULT (strftime('%s', 'now')),
+            organization_id TEXT,
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE SET NULL
         );
 
+        -- Chat members
         CREATE TABLE IF NOT EXISTS chat_members (
-            chat_id INTEGER NOT NULL,
-            user_id INTEGER NOT NULL,
-            joined_at INTEGER,
+            chat_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            joined_at INTEGER DEFAULT (strftime('%s', 'now')),
             last_read_at INTEGER,
-            FOREIGN KEY(chat_id) REFERENCES chats(id),
-            FOREIGN KEY(user_id) REFERENCES users(id),
+            FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
             PRIMARY KEY(chat_id, user_id)
         );
 
+        -- Messages
         CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            chat_id INTEGER NOT NULL,
-            sender_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            chat_id TEXT NOT NULL,
+            sender_id TEXT NOT NULL,
             subject TEXT,
             content TEXT NOT NULL,
-            sent_at INTEGER NOT NULL,
+            sent_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
             edited_at INTEGER,
-            reply_to INTEGER,
-            FOREIGN KEY(chat_id) REFERENCES chats(id),
-            FOREIGN KEY(sender_id) REFERENCES users(id),
-            FOREIGN KEY(reply_to) REFERENCES messages(id)
+            reply_to TEXT,
+            FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+            FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(reply_to) REFERENCES messages(id) ON DELETE SET NULL
         );
 
+        -- Message attachments
         CREATE TABLE IF NOT EXISTS message_attachments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id INTEGER NOT NULL,
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
             filename TEXT NOT NULL,
             file_data BLOB NOT NULL,
             file_size INTEGER NOT NULL,
             mime_type TEXT,
-            uploaded_at INTEGER,
-            FOREIGN KEY(message_id) REFERENCES messages(id)
+            uploaded_at INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
         );
+
+        -- Notifications
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+            is_read BOOLEAN DEFAULT 0,
+            sent_to_telegram BOOLEAN DEFAULT 0,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Audit logs
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            entity_id TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        -- Indexes for performance
+        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+        CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+        CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
+        CREATE INDEX IF NOT EXISTS idx_marks_student ON marks(student_id);
+        CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
+        CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
+        CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
         """
         )
         db.commit()
@@ -390,11 +493,12 @@ def hash_password(password):
 
 
 def get_auth_user():
+    """Получить user_id из JWT токена"""
     token = request.headers.get("Authorization")
     if token:
         try:
             data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            return data["username"]
+            return data.get("user_id")  # Возвращаем user_id (TEXT UUID)
         except:
             pass
     return None
@@ -427,15 +531,13 @@ def generate_verification_code():
     return "".join([str(secrets.randbelow(10)) for _ in range(6)])
 
 
-def get_auth_user():
-    token = request.headers.get("Authorization")
-    if token:
-        try:
-            data = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-            return data.get("user_id")  # ИЗМЕНЕНО: было username
-        except:
-            pass
-    return None
+def get_user_id(username):
+    """DEPRECATED - используйте get_auth_user напрямую для получения ID"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+    row = cur.fetchone()
+    return row["id"] if row else None
 
 
 @app.route("/register", methods=["POST", "OPTIONS"])
@@ -461,13 +563,8 @@ def register():
     if cur.fetchone():
         return jsonify({"error": "Username or email exists"}), 400
 
-    # Генерация ID и кода
-    while True:
-        user_id = "".join([str(secrets.randbelow(10)) for _ in range(16)])
-        cur.execute("SELECT id FROM users WHERE id = ?", (user_id,))
-        if not cur.fetchone():
-            break
-
+    # Генерация UUID ID
+    user_id = generate_uuid()
     code = generate_verification_code()
     expires = int(time.time()) + 600  # 10 минут
 
@@ -475,8 +572,8 @@ def register():
     cur.execute(
         """
         INSERT INTO users (id, username, password_hash, email, verification_code, 
-                          verification_expires, roles, current_role)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                          verification_expires, roles, current_role, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """,
         (
             user_id,
@@ -487,6 +584,7 @@ def register():
             expires,
             json.dumps(["student"]),
             "student",
+            int(time.time()),
         ),
     )
     db.commit()
@@ -505,7 +603,9 @@ def register():
     """
     send_email(email, subject, body, html_body)
 
-    return jsonify({"message": "Code sent", "email": email})
+    log_audit(user_id, "USER_REGISTERED")
+
+    return jsonify({"message": "Code sent", "email": email, "user_id": user_id})
 
 
 @app.route("/verify", methods=["POST", "OPTIONS"])
@@ -537,16 +637,18 @@ def verify_email():
     cur.execute("UPDATE users SET email_verified = 1 WHERE email = ?", (email,))
     db.commit()
 
-    # Генерация токена
+    # Генерация токена с user_id (TEXT)
     token = jwt.encode(
         {
-            "user_id": user["id"],
+            "user_id": user["id"],  # Теперь это TEXT (UUID)
             "username": user["username"],
             "exp": datetime.datetime.utcnow() + datetime.timedelta(days=30),
         },
         SECRET_KEY,
         algorithm="HS256",
     )
+
+    log_audit(user["id"], "EMAIL_VERIFIED")
 
     return jsonify({"token": token, "user_id": user["id"]})
 
@@ -608,13 +710,15 @@ def login():
 
     token = jwt.encode(
         {
-            "user_id": user["id"],
+            "user_id": user["id"],  # TEXT UUID
             "username": user["username"],
             "exp": datetime.datetime.utcnow() + datetime.timedelta(days=30),
         },
         SECRET_KEY,
         algorithm="HS256",
     )
+
+    log_audit(user["id"], "USER_LOGIN")
 
     return jsonify({"token": token, "user_id": user["id"]})
 
@@ -623,16 +727,19 @@ def login():
 def logout():
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
     db = get_db()
     cur = db.cursor()
     cur.execute(
-        "UPDATE users SET logout_timestamp = ? WHERE username = ?",
-        (int(time.time()), username),
+        "UPDATE users SET logout_timestamp = ? WHERE id = ?",
+        (int(time.time()), user_id),
     )
     db.commit()
+
+    log_audit(user_id, "USER_LOGOUT")
+
     return jsonify({"message": "Logged out"})
 
 
