@@ -15,6 +15,9 @@ from flask_mail import Mail, Message
 from threading import Timer
 from flask_socketio import SocketIO, emit
 import secrets
+import pandas as pd
+from werkzeug.utils import secure_filename
+import os
 
 app = Flask(__name__)
 CORS(
@@ -979,50 +982,70 @@ def view_event(username, privacy, name):
     if request.method == "OPTIONS":
         return "", 200
 
-    event_id = name  # Теперь это UUID string
+    event_id = name  # UUID string
     db = get_db()
     cur = db.cursor()
+
+    # Получаем событие
     cur.execute("SELECT * FROM events WHERE id = ?", (event_id,))
     event = cur.fetchone()
 
     if not event:
-        return jsonify({"error": "Not found"}), 404
+        return jsonify({"error": "Event not found"}), 404
 
-    # Получаем ID владельца по username
-    cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+    # Получаем владельца
+    cur.execute("SELECT id, username FROM users WHERE id = ?", (event["owner_id"],))
     owner = cur.fetchone()
+
     if not owner:
         return jsonify({"error": "Owner not found"}), 404
 
-    owner_id = owner["id"]
+    # Проверяем права доступа
+    auth_user_id = get_auth_user()
+    is_owner = auth_user_id == event["owner_id"]
 
-    if event["owner_id"] != owner_id:
-        auth_user_id = get_auth_user()
-        if auth_user_id:
-            cur.execute(
-                "SELECT * FROM shared_events WHERE event_id = ? AND user_id = ? AND accepted = 1",
-                (event_id, auth_user_id),
-            )
-            if not cur.fetchone() and event["privacy"] == "private":
-                return jsonify({"error": "Unauthorized"}), 401
-        elif event["privacy"] == "private":
-            return jsonify({"error": "Unauthorized"}), 401
+    # Проверяем shared access
+    is_shared_user = False
+    if auth_user_id and not is_owner:
+        cur.execute(
+            "SELECT * FROM shared_events WHERE event_id = ? AND user_id = ? AND accepted = 1",
+            (event_id, auth_user_id),
+        )
+        if cur.fetchone():
+            is_shared_user = True
 
-    if event["privacy"] == "private":
-        pass_param = request.args.get("password")
-        if event["password_hash"] and (
-            not pass_param or hash_password(pass_param) != event["password_hash"]
-        ):
-            return jsonify({"error": "Wrong password"}), 403
+    # Публичные события доступны всем
+    if event["privacy"] == "public":
+        pass  # Доступ разрешён
+    elif event["privacy"] == "private":
+        # Приватные события требуют либо ownership, либо shared access, либо пароль
+        if not is_owner and not is_shared_user:
+            # Проверяем пароль если есть
+            if event["password_hash"]:
+                password_param = request.args.get("password")
+                if (
+                    not password_param
+                    or hash_password(password_param) != event["password_hash"]
+                ):
+                    return (
+                        jsonify(
+                            {"error": "Password required", "requires_password": True}
+                        ),
+                        403,
+                    )
+            else:
+                # Приватное без пароля - только для owner и shared users
+                return jsonify({"error": "Access denied"}), 403
+
+        # Проверяем срок действия
         if event["expiration_days"]:
-            create_time = datetime.datetime.strptime(
-                event["date"] + " " + event["time"], "%Y-%m-%d %H:%M"
-            )
-            if datetime.datetime.now() - create_time > datetime.timedelta(
-                days=event["expiration_days"]
+            event_created = event.get("created_at", 0)
+            if int(time.time()) - event_created > (
+                event["expiration_days"] * 24 * 60 * 60
             ):
-                return jsonify({"error": "Expired"}), 403
+                return jsonify({"error": "Event expired"}), 410
 
+    # Формируем ответ
     ev_dict = dict(event)
     ev_dict["recurring_options"] = (
         json.loads(ev_dict["recurring_options"])
@@ -1036,6 +1059,7 @@ def view_event(username, privacy, name):
     ev_dict["type"] = privacy
     ev_dict["name"] = name
 
+    # Дополнительная информация
     cur.execute(
         "SELECT COUNT(*) as count FROM shared_events WHERE event_id = ?", (event_id,)
     )
@@ -1047,6 +1071,14 @@ def view_event(username, privacy, name):
     )
     share = cur.fetchone()
     ev_dict["allowComments"] = share["allow_comments"] if share else False
+
+    # Добавляем информацию о владельце
+    ev_dict["owner_username"] = owner["username"]
+    ev_dict["is_owner"] = is_owner
+    ev_dict["can_edit"] = is_owner or is_shared_user
+
+    # Скрываем чувствительные данные
+    ev_dict.pop("password_hash", None)
 
     return jsonify(ev_dict)
 
@@ -1285,16 +1317,370 @@ def decline_share(share_id):
 
 @app.route("/api/users/get-by-role", methods=["GET", "OPTIONS"])
 def get_users_by_role():
+    """Получить список пользователей по роли"""
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
     role = request.args.get("role")
+    organization_id = request.args.get("organization_id")
+
+    if not role:
+        return jsonify({"error": "role parameter required"}), 400
+
     db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT id, username FROM users WHERE roles LIKE ?", (f'%"{role}"%',))
-    return jsonify([dict(row) for row in cur.fetchall()])
+
+    if organization_id:
+        # Получаем пользователей организации с определенной ролью
+        cur.execute(
+            """SELECT u.id, u.username, u.email, u.first_name, u.last_name,
+                      om.roles, om.current_role
+               FROM users u
+               JOIN organization_members om ON u.id = om.user_id
+               WHERE om.organization_id = ? AND om.roles LIKE ?
+               ORDER BY u.last_name, u.first_name""",
+            (organization_id, f'%"{role}"%'),
+        )
+    else:
+        # Получаем всех пользователей с этой ролью в системе
+        cur.execute(
+            """SELECT id, username, email, first_name, last_name, roles, current_role
+               FROM users
+               WHERE roles LIKE ?
+               ORDER BY last_name, first_name""",
+            (f'%"{role}"%',),
+        )
+
+    users = []
+    for row in cur.fetchall():
+        user_dict = dict(row)
+        user_dict["roles"] = (
+            json.loads(user_dict["roles"])
+            if isinstance(user_dict["roles"], str)
+            else user_dict["roles"]
+        )
+        users.append(user_dict)
+
+    return jsonify(users)
+
+
+@app.route("/api/users/search", methods=["GET", "OPTIONS"])
+def search_users_advanced():
+    """Расширенный поиск пользователей"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    query = request.args.get("q", "").strip()
+    organization_id = request.args.get("organization_id")
+    role = request.args.get("role")
+    limit = int(request.args.get("limit", 20))
+
+    if len(query) < 2:
+        return jsonify({"error": "Query too short (min 2 characters)"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Формируем запрос
+    if organization_id:
+        sql = """
+            SELECT u.id, u.username, u.email, u.first_name, u.last_name,
+                   om.roles, om.current_role
+            FROM users u
+            JOIN organization_members om ON u.id = om.user_id
+            WHERE om.organization_id = ?
+            AND (u.username LIKE ? OR u.email LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)
+        """
+        params = [
+            organization_id,
+            f"%{query}%",
+            f"%{query}%",
+            f"%{query}%",
+            f"%{query}%",
+        ]
+
+        if role:
+            sql += " AND om.roles LIKE ?"
+            params.append(f'%"{role}"%')
+
+        sql += " ORDER BY u.last_name, u.first_name LIMIT ?"
+        params.append(limit)
+
+        cur.execute(sql, params)
+    else:
+        sql = """
+            SELECT id, username, email, first_name, last_name, roles, current_role
+            FROM users
+            WHERE username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ?
+        """
+        params = [f"%{query}%", f"%{query}%", f"%{query}%", f"%{query}%"]
+
+        if role:
+            sql += " AND roles LIKE ?"
+            params.append(f'%"{role}"%')
+
+        sql += " ORDER BY last_name, first_name LIMIT ?"
+        params.append(limit)
+
+        cur.execute(sql, params)
+
+    users = []
+    for row in cur.fetchall():
+        user_dict = dict(row)
+        user_dict["roles"] = (
+            json.loads(user_dict["roles"])
+            if isinstance(user_dict["roles"], str)
+            else user_dict["roles"]
+        )
+        users.append(user_dict)
+
+    return jsonify(users)
+
+
+@app.route("/api/users/<target_user_id>/profile", methods=["GET", "OPTIONS"])
+def get_user_profile(target_user_id):
+    """Получить профиль пользователя"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Базовая информация
+    cur.execute(
+        """SELECT id, username, email, first_name, last_name, middle_name,
+                  roles, current_role, created_at, telegram_id
+           FROM users WHERE id = ?""",
+        (target_user_id,),
+    )
+
+    user = cur.fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    user_dict = dict(user)
+    user_dict["roles"] = json.loads(user_dict["roles"])
+
+    # Скрываем чувствительные данные если не свой профиль
+    if user_id != target_user_id:
+        user_dict.pop("email", None)
+        user_dict["telegram_linked"] = bool(user_dict.pop("telegram_id", None))
+    else:
+        user_dict["telegram_linked"] = bool(user_dict.get("telegram_id"))
+        user_dict.pop("telegram_id", None)
+
+    # Получаем организации пользователя
+    cur.execute(
+        """SELECT o.id, o.name, o.short_name, om.roles, om.current_role
+           FROM organizations o
+           JOIN organization_members om ON o.id = om.organization_id
+           WHERE om.user_id = ?""",
+        (target_user_id,),
+    )
+
+    organizations = []
+    for row in cur.fetchall():
+        org_dict = dict(row)
+        org_dict["roles"] = json.loads(org_dict["roles"])
+        organizations.append(org_dict)
+
+    user_dict["organizations"] = organizations
+
+    # Если студент - получаем группы
+    if "student" in user_dict["roles"]:
+        cur.execute(
+            """SELECT g.id, g.name, g.specialty, g.course, o.name as organization_name
+               FROM groups g
+               JOIN user_groups ug ON g.id = ug.group_id
+               JOIN organizations o ON g.organization_id = o.id
+               WHERE ug.user_id = ?""",
+            (target_user_id,),
+        )
+        user_dict["groups"] = [dict(row) for row in cur.fetchall()]
+
+    # Если преподаватель - получаем предметы
+    if "teacher" in user_dict["roles"]:
+        cur.execute(
+            """SELECT DISTINCT s.id, s.name, s.code, o.name as organization_name
+               FROM subjects s
+               JOIN group_subjects gs ON s.id = gs.subject_id
+               JOIN groups g ON gs.group_id = g.id
+               JOIN organizations o ON g.organization_id = o.id
+               WHERE gs.teacher_id = ?""",
+            (target_user_id,),
+        )
+        user_dict["subjects"] = [dict(row) for row in cur.fetchall()]
+
+    return jsonify(user_dict)
+
+
+@app.route("/api/users/me/update", methods=["PUT", "OPTIONS"])
+def update_own_profile():
+    """Обновить свой профиль"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Разрешённые поля для обновления
+    allowed_fields = ["first_name", "last_name", "middle_name", "email"]
+
+    updates = []
+    values = []
+
+    for field in allowed_fields:
+        if field in data:
+            updates.append(f"{field} = ?")
+            values.append(data[field])
+
+    if not updates:
+        return jsonify({"error": "No fields to update"}), 400
+
+    # Проверяем уникальность email если обновляется
+    if "email" in data:
+        cur.execute(
+            "SELECT id FROM users WHERE email = ? AND id != ?", (data["email"], user_id)
+        )
+        if cur.fetchone():
+            return jsonify({"error": "Email already in use"}), 400
+
+    values.append(user_id)
+
+    sql = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+    cur.execute(sql, values)
+    db.commit()
+
+    log_audit(user_id, "PROFILE_UPDATED", user_id)
+
+    return jsonify({"message": "Profile updated"})
+
+
+@app.route("/api/telegram/link", methods=["POST", "OPTIONS"])
+def link_telegram():
+    """Привязать Telegram аккаунт"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    telegram_id = data.get("telegram_id")
+    verification_code = data.get("verification_code")  # Для безопасности
+
+    if not telegram_id:
+        return jsonify({"error": "telegram_id required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем, не занят ли telegram_id
+    cur.execute(
+        "SELECT id FROM users WHERE telegram_id = ? AND id != ?", (telegram_id, user_id)
+    )
+    if cur.fetchone():
+        return jsonify({"error": "Telegram ID already linked to another account"}), 400
+
+    # Обновляем
+    cur.execute("UPDATE users SET telegram_id = ? WHERE id = ?", (telegram_id, user_id))
+    db.commit()
+
+    log_audit(user_id, "TELEGRAM_LINKED", user_id)
+
+    return jsonify({"message": "Telegram linked successfully"})
+
+
+@app.route("/api/telegram/unlink", methods=["POST", "OPTIONS"])
+def unlink_telegram():
+    """Отвязать Telegram аккаунт"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("UPDATE users SET telegram_id = NULL WHERE id = ?", (user_id,))
+    db.commit()
+
+    log_audit(user_id, "TELEGRAM_UNLINKED", user_id)
+
+    return jsonify({"message": "Telegram unlinked"})
+
+
+@app.route("/api/organizations/<org_id>/members", methods=["GET", "OPTIONS"])
+def get_organization_members(org_id):
+    """Получить список участников организации"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Проверяем членство
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?",
+        (org_id, user_id),
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Not a member"}), 403
+
+    # Получаем всех участников
+    role_filter = request.args.get("role")  # фильтр по роли
+
+    query = """
+        SELECT u.id, u.username, u.first_name, u.last_name, u.email,
+               om.roles, om.current_role, om.joined_at
+        FROM users u
+        JOIN organization_members om ON u.id = om.user_id
+        WHERE om.organization_id = ?
+    """
+    params = [org_id]
+
+    if role_filter:
+        query += " AND om.roles LIKE ?"
+        params.append(f'%"{role_filter}"%')
+
+    query += " ORDER BY u.last_name, u.first_name"
+
+    cur.execute(query, params)
+
+    members = []
+    for row in cur.fetchall():
+        member_dict = dict(row)
+        member_dict["roles"] = json.loads(member_dict["roles"])
+        members.append(member_dict)
+
+    return jsonify(
+        {"organization_id": org_id, "members": members, "total": len(members)}
+    )
 
 
 @app.route("/api/events/<event_id>/comments", methods=["GET", "POST", "OPTIONS"])
@@ -1362,6 +1748,7 @@ def event_history(event_id):
 
 @app.route("/api/marks/add", methods=["POST", "OPTIONS"])
 def add_mark():
+    """Добавить оценку студенту"""
     if request.method == "OPTIONS":
         return "", 200
 
@@ -1372,8 +1759,11 @@ def add_mark():
     data = request.json
     actual_lesson_id = data.get("actual_lesson_id")
     student_id = data.get("student_id")
-    mark_value = data.get("value")  # Переименовано чтобы избежать конфликта
+    mark_value = data.get("value")
     comment = data.get("comment")
+
+    if not all([actual_lesson_id, student_id, mark_value]):
+        return jsonify({"error": "Missing required fields"}), 400
 
     db = get_db()
     cur = db.cursor()
@@ -1383,43 +1773,333 @@ def add_mark():
     cur.execute(
         """INSERT INTO marks (id, actual_lesson_id, student_id, value, comment, created_at) 
            VALUES (?, ?, ?, ?, ?, ?)""",
-        (
-            mark_id,
-            actual_lesson_id,
-            student_id,
-            mark_value,
-            comment,
-            int(time.time()),
-        ),
+        (mark_id, actual_lesson_id, student_id, mark_value, comment, int(time.time())),
     )
     db.commit()
 
-    # Получаем email студента и отправляем уведомление
+    # Получаем информацию о предмете для уведомления
+    cur.execute(
+        """SELECT s.name as subject_name
+           FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           WHERE al.id = ?""",
+        (actual_lesson_id,),
+    )
+    subject_info = cur.fetchone()
+    subject_name = subject_info["subject_name"] if subject_info else "предмету"
+
+    # Уведомление студенту
+    notif_content = f"Новая оценка по {subject_name}: {mark_value}"
+    if comment:
+        notif_content += f". {comment}"
+
+    create_notification(student_id, "grade", notif_content)
+
+    # Email уведомление
     cur.execute("SELECT email, username FROM users WHERE id = ?", (student_id,))
     student = cur.fetchone()
-
-    if student:
-        # Создаем уведомление
-        notif_content = f"Новая оценка: {mark_value}"
-        if comment:
-            notif_content += f". Комментарий: {comment}"
-
-        create_notification(student_id, "grade", notif_content)
-
-        # Отправляем email
-        if student["email"]:
-            subject = "Новая оценка в KipCalendar"
-            body = f"Здравствуйте, {student['username']}!\n\nВам выставлена новая оценка:\n"
-            if mark_value:
-                body += f"Оценка: {mark_value}\n"
-            if comment:
-                body += f"Комментарий: {comment}\n"
-
-            send_email(student["email"], subject, body)
+    if student and student["email"]:
+        subject = "Новая оценка в KipCalendar"
+        body = f"Здравствуйте, {student['username']}!\n\n{notif_content}"
+        send_email(student["email"], subject, body)
 
     log_audit(user_id, "MARK_ADDED", mark_id)
 
     return jsonify({"message": "Mark added", "mark_id": mark_id})
+
+
+@app.route("/api/marks/<mark_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def modify_mark(mark_id):
+    """Изменить или удалить оценку"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("SELECT * FROM marks WHERE id = ?", (mark_id,))
+    mark = cur.fetchone()
+
+    if not mark:
+        return jsonify({"error": "Mark not found"}), 404
+
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM marks WHERE id = ?", (mark_id,))
+        db.commit()
+        log_audit(user_id, "MARK_DELETED", mark_id)
+        return jsonify({"message": "Mark deleted"})
+
+    else:  # PUT
+        data = request.json
+        cur.execute(
+            "UPDATE marks SET value = ?, comment = ? WHERE id = ?",
+            (
+                data.get("value", mark["value"]),
+                data.get("comment", mark["comment"]),
+                mark_id,
+            ),
+        )
+        db.commit()
+        log_audit(user_id, "MARK_UPDATED", mark_id)
+        return jsonify({"message": "Mark updated"})
+
+
+@app.route(
+    "/api/marks/student/<student_id>/subject/<subject_id>", methods=["GET", "OPTIONS"]
+)
+def get_student_marks(student_id, subject_id):
+    """Получить все оценки студента по предмету"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        """SELECT m.*, al.date, al.topic, u.username as teacher_name
+           FROM marks m
+           JOIN actual_lessons al ON m.actual_lesson_id = al.id
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN users u ON l.teacher_id = u.id
+           WHERE m.student_id = ? AND l.subject_id = ?
+           ORDER BY al.date DESC""",
+        (student_id, subject_id),
+    )
+
+    return jsonify([dict(row) for row in cur.fetchall()])
+
+
+# ============ ATTENDANCE API ============
+
+
+@app.route("/api/attendance/add", methods=["POST", "OPTIONS"])
+def add_attendance():
+    """Отметить посещаемость"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    actual_lesson_id = data.get("actual_lesson_id")
+    student_id = data.get("student_id")
+    status = data.get("status")  # present, absent, late
+    note = data.get("note")
+
+    if not all([actual_lesson_id, student_id, status]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    if status not in ["present", "absent", "late"]:
+        return jsonify({"error": "Invalid status"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем существование записи
+    cur.execute(
+        "SELECT id FROM attendance WHERE actual_lesson_id = ? AND student_id = ?",
+        (actual_lesson_id, student_id),
+    )
+    existing = cur.fetchone()
+
+    if existing:
+        # Обновляем
+        cur.execute(
+            "UPDATE attendance SET status = ?, note = ? WHERE id = ?",
+            (status, note, existing["id"]),
+        )
+        attendance_id = existing["id"]
+    else:
+        # Создаем новую
+        attendance_id = generate_uuid()
+        cur.execute(
+            "INSERT INTO attendance (id, actual_lesson_id, student_id, status, note) VALUES (?, ?, ?, ?, ?)",
+            (attendance_id, actual_lesson_id, student_id, status, note),
+        )
+
+    db.commit()
+    log_audit(user_id, "ATTENDANCE_MARKED", attendance_id)
+
+    return jsonify({"message": "Attendance marked", "attendance_id": attendance_id})
+
+
+@app.route("/api/attendance/<attendance_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def modify_attendance(attendance_id):
+    """Изменить или удалить отметку посещаемости"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM attendance WHERE id = ?", (attendance_id,))
+        db.commit()
+        log_audit(user_id, "ATTENDANCE_DELETED", attendance_id)
+        return jsonify({"message": "Attendance deleted"})
+
+    else:  # PUT
+        data = request.json
+        cur.execute(
+            "UPDATE attendance SET status = ?, note = ? WHERE id = ?",
+            (data.get("status"), data.get("note"), attendance_id),
+        )
+        db.commit()
+        log_audit(user_id, "ATTENDANCE_UPDATED", attendance_id)
+        return jsonify({"message": "Attendance updated"})
+
+
+@app.route("/api/attendance/student/<student_id>", methods=["GET", "OPTIONS"])
+def get_student_attendance(student_id):
+    """Получить историю посещаемости студента"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        """SELECT a.*, al.date, s.name as subject_name, l.start_time, l.end_time
+           FROM attendance a
+           JOIN actual_lessons al ON a.actual_lesson_id = al.id
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           WHERE a.student_id = ?
+           ORDER BY al.date DESC, l.start_time""",
+        (student_id,),
+    )
+
+    return jsonify([dict(row) for row in cur.fetchall()])
+
+
+# ============ JOURNAL SUMMARY API ============
+
+
+@app.route("/api/journal/student/<student_id>/summary", methods=["GET", "OPTIONS"])
+def get_student_journal_summary(student_id):
+    """Получить сводку по журналу студента (все предметы, оценки, посещаемость)"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Проверяем права: либо сам студент, либо учитель/админ его группы
+    if user_id != student_id:
+        # TODO: добавить проверку прав учителя/админа
+        pass
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем группы студента
+    cur.execute(
+        """SELECT g.id, g.name, o.name as organization_name
+           FROM user_groups ug
+           JOIN groups g ON ug.group_id = g.id
+           JOIN organizations o ON g.organization_id = o.id
+           WHERE ug.user_id = ?""",
+        (student_id,),
+    )
+    groups = [dict(row) for row in cur.fetchall()]
+
+    summary = []
+
+    for group in groups:
+        # Получаем предметы группы
+        cur.execute(
+            """SELECT gs.*, s.name as subject_name
+               FROM group_subjects gs
+               JOIN subjects s ON gs.subject_id = s.id
+               WHERE gs.group_id = ?""",
+            (group["id"],),
+        )
+        subjects = cur.fetchall()
+
+        for subject in subjects:
+            # Получаем оценки
+            cur.execute(
+                """SELECT m.value, m.created_at, al.date
+                   FROM marks m
+                   JOIN actual_lessons al ON m.actual_lesson_id = al.id
+                   JOIN lessons l ON al.lesson_id = l.id
+                   WHERE m.student_id = ? AND l.subject_id = ?
+                   ORDER BY al.date DESC""",
+                (student_id, subject["subject_id"]),
+            )
+            marks = [dict(row) for row in cur.fetchall()]
+
+            # Получаем посещаемость
+            cur.execute(
+                """SELECT a.status, al.date
+                   FROM attendance a
+                   JOIN actual_lessons al ON a.actual_lesson_id = al.id
+                   JOIN lessons l ON al.lesson_id = l.id
+                   WHERE a.student_id = ? AND l.subject_id = ?
+                   ORDER BY al.date DESC""",
+                (student_id, subject["subject_id"]),
+            )
+            attendance = [dict(row) for row in cur.fetchall()]
+
+            # Подсчитываем статистику
+            total_lessons = len(attendance)
+            present_count = sum(1 for a in attendance if a["status"] == "present")
+            absent_count = sum(1 for a in attendance if a["status"] == "absent")
+            late_count = sum(1 for a in attendance if a["status"] == "late")
+
+            # Средняя оценка (если оценки числовые)
+            try:
+                numeric_marks = [float(m["value"]) for m in marks if m["value"]]
+                avg_mark = (
+                    sum(numeric_marks) / len(numeric_marks) if numeric_marks else None
+                )
+            except:
+                avg_mark = None
+
+            summary.append(
+                {
+                    "group_name": group["name"],
+                    "subject_name": subject["subject_name"],
+                    "subject_id": subject["subject_id"],
+                    "total_hours": subject["total_hours"],
+                    "marks": marks,
+                    "marks_count": len(marks),
+                    "average_mark": round(avg_mark, 2) if avg_mark else None,
+                    "attendance": {
+                        "total": total_lessons,
+                        "present": present_count,
+                        "absent": absent_count,
+                        "late": late_count,
+                        "attendance_rate": (
+                            round(present_count / total_lessons * 100, 1)
+                            if total_lessons > 0
+                            else None
+                        ),
+                    },
+                }
+            )
+
+    return jsonify({"student_id": student_id, "groups": groups, "subjects": summary})
 
 
 # ========== МЕССЕНДЖЕР API ==========
@@ -1806,11 +2486,12 @@ def get_invitation(token):
 
     return jsonify(dict(invite))
 
+
 @app.route("/api/invitations/<token>/accept", methods=["POST", "OPTIONS"])
 def accept_invitation(token):
     if request.method == "OPTIONS":
         return "", 200
-    
+
     user_id = get_auth_user()
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -1883,10 +2564,2039 @@ def accept_invitation(token):
     # Увеличиваем счетчик использований
     cur.execute("UPDATE invitations SET uses = uses + 1 WHERE id = ?", (invite["id"],))
     db.commit()
-    
-    log_audit(user_id, 'INVITATION_ACCEPTED', invite["id"])
+
+    log_audit(user_id, "INVITATION_ACCEPTED", invite["id"])
 
     return jsonify({"message": "Joined organization", "organization_id": org_id})
+
+
+# ============ BUILDINGS & ROOMS API ============
+
+
+@app.route("/api/organizations/<org_id>/buildings", methods=["GET", "POST", "OPTIONS"])
+def manage_buildings(org_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем членство в организации
+    if not check_organization_permission(user_id, org_id, "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    if request.method == "GET":
+        # Получить список зданий
+        cur.execute(
+            "SELECT * FROM buildings WHERE organization_id = ? ORDER BY name", (org_id,)
+        )
+        buildings = [dict(row) for row in cur.fetchall()]
+
+        # Для каждого здания получаем комнаты
+        for building in buildings:
+            cur.execute(
+                "SELECT * FROM rooms WHERE building_id = ? ORDER BY name",
+                (building["id"],),
+            )
+            building["rooms"] = [dict(row) for row in cur.fetchall()]
+
+        return jsonify(buildings)
+
+    else:  # POST - создание здания
+        data = request.json
+        name = data.get("name")
+        address = data.get("address")
+
+        if not name:
+            return jsonify({"error": "Name required"}), 400
+
+        building_id = generate_uuid()
+        cur.execute(
+            "INSERT INTO buildings (id, organization_id, name, address) VALUES (?, ?, ?, ?)",
+            (building_id, org_id, name, address),
+        )
+        db.commit()
+
+        log_audit(user_id, "BUILDING_CREATED", building_id)
+
+        return jsonify({"building_id": building_id, "message": "Building created"}), 201
+
+
+@app.route("/api/buildings/<building_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def modify_building(building_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем здание и проверяем права
+    cur.execute("SELECT * FROM buildings WHERE id = ?", (building_id,))
+    building = cur.fetchone()
+
+    if not building:
+        return jsonify({"error": "Building not found"}), 404
+
+    if not check_organization_permission(user_id, building["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM buildings WHERE id = ?", (building_id,))
+        db.commit()
+        log_audit(user_id, "BUILDING_DELETED", building_id)
+        return jsonify({"message": "Building deleted"})
+
+    else:  # PUT - обновление
+        data = request.json
+        name = data.get("name", building["name"])
+        address = data.get("address", building["address"])
+
+        cur.execute(
+            "UPDATE buildings SET name = ?, address = ? WHERE id = ?",
+            (name, address, building_id),
+        )
+        db.commit()
+
+        log_audit(user_id, "BUILDING_UPDATED", building_id)
+
+        return jsonify({"message": "Building updated"})
+
+
+@app.route("/api/buildings/<building_id>/rooms", methods=["POST", "OPTIONS"])
+def add_room(building_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем здание и права
+    cur.execute("SELECT organization_id FROM buildings WHERE id = ?", (building_id,))
+    building = cur.fetchone()
+
+    if not building:
+        return jsonify({"error": "Building not found"}), 404
+
+    if not check_organization_permission(user_id, building["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    data = request.json
+    name = data.get("name")
+    max_groups = data.get("max_groups", 1)
+
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+
+    room_id = generate_uuid()
+    cur.execute(
+        "INSERT INTO rooms (id, building_id, name, max_groups) VALUES (?, ?, ?, ?)",
+        (room_id, building_id, name, max_groups),
+    )
+    db.commit()
+
+    log_audit(user_id, "ROOM_CREATED", room_id)
+
+    return jsonify({"room_id": room_id, "message": "Room created"}), 201
+
+
+@app.route("/api/rooms/<room_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def modify_room(room_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем комнату и проверяем права
+    cur.execute(
+        """SELECT r.*, b.organization_id 
+           FROM rooms r 
+           JOIN buildings b ON r.building_id = b.id 
+           WHERE r.id = ?""",
+        (room_id,),
+    )
+    room = cur.fetchone()
+
+    if not room:
+        return jsonify({"error": "Room not found"}), 404
+
+    if not check_organization_permission(user_id, room["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
+        db.commit()
+        log_audit(user_id, "ROOM_DELETED", room_id)
+        return jsonify({"message": "Room deleted"})
+
+    else:  # PUT
+        data = request.json
+        name = data.get("name", room["name"])
+        max_groups = data.get("max_groups", room["max_groups"])
+
+        cur.execute(
+            "UPDATE rooms SET name = ?, max_groups = ? WHERE id = ?",
+            (name, max_groups, room_id),
+        )
+        db.commit()
+
+        log_audit(user_id, "ROOM_UPDATED", room_id)
+
+        return jsonify({"message": "Room updated"})
+
+
+# ============ GROUPS API ============
+
+
+@app.route("/api/organizations/<org_id>/groups", methods=["GET", "POST", "OPTIONS"])
+def manage_groups(org_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем членство
+    cur.execute(
+        "SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?",
+        (org_id, user_id),
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Not a member"}), 403
+
+    if request.method == "GET":
+        # Получить список групп
+        cur.execute(
+            """SELECT g.*, u.username as curator_name, b.name as building_name
+               FROM groups g
+               LEFT JOIN users u ON g.curator_id = u.id
+               LEFT JOIN buildings b ON g.building_id = b.id
+               WHERE g.organization_id = ?
+               ORDER BY g.course, g.group_number""",
+            (org_id,),
+        )
+        groups = [dict(row) for row in cur.fetchall()]
+
+        # Для каждой группы получаем количество студентов
+        for group in groups:
+            cur.execute(
+                "SELECT COUNT(*) as count FROM user_groups WHERE group_id = ?",
+                (group["id"],),
+            )
+            group["student_count"] = cur.fetchone()["count"]
+
+        return jsonify(groups)
+
+    else:  # POST - создание группы
+        if not check_organization_permission(user_id, org_id, "admin"):
+            return jsonify({"error": "Permission denied"}), 403
+
+        data = request.json
+        name = data.get("name")
+        specialty = data.get("specialty")
+        course = data.get("course")
+        group_number = data.get("group_number")
+        admission_year = data.get("admission_year")
+        group_type = data.get("type")
+        curator_id = data.get("curator_id")
+        building_id = data.get("building_id")
+
+        if not name:
+            return jsonify({"error": "Name required"}), 400
+
+        group_id = generate_uuid()
+        cur.execute(
+            """INSERT INTO groups (id, organization_id, name, specialty, course, group_number, 
+                                  admission_year, type, curator_id, building_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                group_id,
+                org_id,
+                name,
+                specialty,
+                course,
+                group_number,
+                admission_year,
+                group_type,
+                curator_id,
+                building_id,
+            ),
+        )
+        db.commit()
+
+        log_audit(user_id, "GROUP_CREATED", group_id)
+
+        return jsonify({"group_id": group_id, "message": "Group created"}), 201
+
+
+@app.route("/api/groups/<group_id>", methods=["GET", "PUT", "DELETE", "OPTIONS"])
+def manage_single_group(group_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем группу
+    cur.execute("SELECT * FROM groups WHERE id = ?", (group_id,))
+    group = cur.fetchone()
+
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    # Проверяем членство в организации
+    cur.execute(
+        "SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?",
+        (group["organization_id"], user_id),
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Not a member"}), 403
+
+    if request.method == "GET":
+        # Получить детали группы со студентами
+        group_dict = dict(group)
+
+        # Получаем студентов
+        cur.execute(
+            """SELECT u.id, u.username, u.email, u.first_name, u.last_name
+               FROM users u
+               JOIN user_groups ug ON u.id = ug.user_id
+               WHERE ug.group_id = ?
+               ORDER BY u.last_name, u.first_name""",
+            (group_id,),
+        )
+        group_dict["students"] = [dict(row) for row in cur.fetchall()]
+
+        # Получаем куратора
+        if group["curator_id"]:
+            cur.execute(
+                "SELECT id, username, email, first_name, last_name FROM users WHERE id = ?",
+                (group["curator_id"],),
+            )
+            group_dict["curator"] = dict(cur.fetchone() or {})
+
+        return jsonify(group_dict)
+
+    elif request.method == "DELETE":
+        if not check_organization_permission(
+            user_id, group["organization_id"], "admin"
+        ):
+            return jsonify({"error": "Permission denied"}), 403
+
+        cur.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        db.commit()
+
+        log_audit(user_id, "GROUP_DELETED", group_id)
+
+        return jsonify({"message": "Group deleted"})
+
+    else:  # PUT
+        if not check_organization_permission(
+            user_id, group["organization_id"], "admin"
+        ):
+            return jsonify({"error": "Permission denied"}), 403
+
+        data = request.json
+
+        cur.execute(
+            """UPDATE groups 
+               SET name = ?, specialty = ?, course = ?, group_number = ?, 
+                   admission_year = ?, type = ?, curator_id = ?, building_id = ?
+               WHERE id = ?""",
+            (
+                data.get("name", group["name"]),
+                data.get("specialty", group["specialty"]),
+                data.get("course", group["course"]),
+                data.get("group_number", group["group_number"]),
+                data.get("admission_year", group["admission_year"]),
+                data.get("type", group["type"]),
+                data.get("curator_id", group["curator_id"]),
+                data.get("building_id", group["building_id"]),
+                group_id,
+            ),
+        )
+        db.commit()
+
+        log_audit(user_id, "GROUP_UPDATED", group_id)
+
+        return jsonify({"message": "Group updated"})
+
+
+@app.route("/api/groups/<group_id>/students", methods=["POST", "DELETE", "OPTIONS"])
+def manage_group_students(group_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем группу и права
+    cur.execute("SELECT organization_id FROM groups WHERE id = ?", (group_id,))
+    group = cur.fetchone()
+
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    if not check_organization_permission(user_id, group["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    data = request.json
+    student_id = data.get("student_id")
+
+    if not student_id:
+        return jsonify({"error": "student_id required"}), 400
+
+    if request.method == "POST":
+        # Добавить студента
+        try:
+            cur.execute(
+                "INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)",
+                (student_id, group_id),
+            )
+            db.commit()
+            log_audit(user_id, "STUDENT_ADDED_TO_GROUP", group_id)
+            return jsonify({"message": "Student added"})
+        except sqlite3.IntegrityError:
+            return jsonify({"error": "Student already in group"}), 400
+
+    else:  # DELETE
+        cur.execute(
+            "DELETE FROM user_groups WHERE user_id = ? AND group_id = ?",
+            (student_id, group_id),
+        )
+        db.commit()
+        log_audit(user_id, "STUDENT_REMOVED_FROM_GROUP", group_id)
+        return jsonify({"message": "Student removed"})
+
+
+# ============ SUBJECTS API ============
+
+
+@app.route("/api/organizations/<org_id>/subjects", methods=["GET", "POST", "OPTIONS"])
+def manage_subjects(org_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем членство
+    cur.execute(
+        "SELECT * FROM organization_members WHERE organization_id = ? AND user_id = ?",
+        (org_id, user_id),
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Not a member"}), 403
+
+    if request.method == "GET":
+        cur.execute(
+            "SELECT * FROM subjects WHERE organization_id = ? ORDER BY name", (org_id,)
+        )
+        return jsonify([dict(row) for row in cur.fetchall()])
+
+    else:  # POST
+        if not check_organization_permission(user_id, org_id, "admin"):
+            return jsonify({"error": "Permission denied"}), 403
+
+        data = request.json
+        name = data.get("name")
+        code = data.get("code")
+        description = data.get("description")
+
+        if not name:
+            return jsonify({"error": "Name required"}), 400
+
+        subject_id = generate_uuid()
+        cur.execute(
+            "INSERT INTO subjects (id, organization_id, name, code, description) VALUES (?, ?, ?, ?, ?)",
+            (subject_id, org_id, name, code, description),
+        )
+        db.commit()
+
+        log_audit(user_id, "SUBJECT_CREATED", subject_id)
+
+        return jsonify({"subject_id": subject_id, "message": "Subject created"}), 201
+
+
+@app.route("/api/subjects/<subject_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def modify_subject(subject_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("SELECT * FROM subjects WHERE id = ?", (subject_id,))
+    subject = cur.fetchone()
+
+    if not subject:
+        return jsonify({"error": "Subject not found"}), 404
+
+    if not check_organization_permission(user_id, subject["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
+        db.commit()
+        log_audit(user_id, "SUBJECT_DELETED", subject_id)
+        return jsonify({"message": "Subject deleted"})
+
+    else:  # PUT
+        data = request.json
+        cur.execute(
+            "UPDATE subjects SET name = ?, code = ?, description = ? WHERE id = ?",
+            (
+                data.get("name", subject["name"]),
+                data.get("code", subject["code"]),
+                data.get("description", subject["description"]),
+                subject_id,
+            ),
+        )
+        db.commit()
+        log_audit(user_id, "SUBJECT_UPDATED", subject_id)
+        return jsonify({"message": "Subject updated"})
+
+
+# ============ GROUP-SUBJECT ASSIGNMENT ============
+
+
+@app.route("/api/groups/<group_id>/subjects", methods=["GET", "POST", "OPTIONS"])
+def manage_group_subjects(group_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем группу
+    cur.execute("SELECT organization_id FROM groups WHERE id = ?", (group_id,))
+    group = cur.fetchone()
+
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    if request.method == "GET":
+        # Получить предметы группы
+        cur.execute(
+            """SELECT gs.*, s.name as subject_name, s.code as subject_code,
+                      u.username as teacher_name, u.first_name, u.last_name
+               FROM group_subjects gs
+               JOIN subjects s ON gs.subject_id = s.id
+               LEFT JOIN users u ON gs.teacher_id = u.id
+               WHERE gs.group_id = ?
+               ORDER BY s.name""",
+            (group_id,),
+        )
+        return jsonify([dict(row) for row in cur.fetchall()])
+
+    else:  # POST - назначить предмет группе
+        if not check_organization_permission(
+            user_id, group["organization_id"], "admin"
+        ):
+            return jsonify({"error": "Permission denied"}), 403
+
+        data = request.json
+        subject_id = data.get("subject_id")
+        teacher_id = data.get("teacher_id")
+        total_hours = data.get("total_hours", 0)
+
+        if not subject_id:
+            return jsonify({"error": "subject_id required"}), 400
+
+        try:
+            gs_id = generate_uuid()
+            cur.execute(
+                """INSERT INTO group_subjects (id, group_id, subject_id, teacher_id, total_hours)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (gs_id, group_id, subject_id, teacher_id, total_hours),
+            )
+            db.commit()
+            log_audit(user_id, "SUBJECT_ASSIGNED_TO_GROUP", gs_id)
+            return jsonify({"id": gs_id, "message": "Subject assigned"}), 201
+        except sqlite3.IntegrityError:
+            return jsonify({"error": "Subject already assigned to group"}), 400
+
+
+@app.route("/api/group-subjects/<gs_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def modify_group_subject(gs_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем запись
+    cur.execute(
+        """SELECT gs.*, g.organization_id
+           FROM group_subjects gs
+           JOIN groups g ON gs.group_id = g.id
+           WHERE gs.id = ?""",
+        (gs_id,),
+    )
+    gs = cur.fetchone()
+
+    if not gs:
+        return jsonify({"error": "Not found"}), 404
+
+    if not check_organization_permission(user_id, gs["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM group_subjects WHERE id = ?", (gs_id,))
+        db.commit()
+        log_audit(user_id, "SUBJECT_UNASSIGNED_FROM_GROUP", gs_id)
+        return jsonify({"message": "Subject unassigned"})
+
+    else:  # PUT
+        data = request.json
+        cur.execute(
+            "UPDATE group_subjects SET teacher_id = ?, total_hours = ? WHERE id = ?",
+            (data.get("teacher_id"), data.get("total_hours", gs["total_hours"]), gs_id),
+        )
+        db.commit()
+        log_audit(user_id, "GROUP_SUBJECT_UPDATED", gs_id)
+        return jsonify({"message": "Updated"})
+
+
+# ============ LESSONS (SCHEDULE) API ============
+
+
+@app.route("/api/groups/<group_id>/schedule", methods=["GET", "POST", "OPTIONS"])
+def manage_schedule(group_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем группу
+    cur.execute("SELECT organization_id FROM groups WHERE id = ?", (group_id,))
+    group = cur.fetchone()
+
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    if request.method == "GET":
+        # Получить расписание группы
+        cur.execute(
+            """SELECT l.*, s.name as subject_name, s.code as subject_code,
+                      u.username as teacher_name, u.first_name as teacher_first_name,
+                      u.last_name as teacher_last_name,
+                      r.name as room_name, b.name as building_name
+               FROM lessons l
+               JOIN subjects s ON l.subject_id = s.id
+               JOIN users u ON l.teacher_id = u.id
+               LEFT JOIN rooms r ON l.room_id = r.id
+               LEFT JOIN buildings b ON r.building_id = b.id
+               WHERE l.group_id = ?
+               ORDER BY l.day_of_week, l.start_time""",
+            (group_id,),
+        )
+        lessons = [dict(row) for row in cur.fetchall()]
+
+        # Группируем по дням недели
+        schedule = {i: [] for i in range(7)}
+        for lesson in lessons:
+            schedule[lesson["day_of_week"]].append(lesson)
+
+        return jsonify({"group_id": group_id, "schedule": schedule, "lessons": lessons})
+
+    else:  # POST - создать урок
+        if not check_organization_permission(
+            user_id, group["organization_id"], "admin"
+        ):
+            return jsonify({"error": "Permission denied"}), 403
+
+        data = request.json
+        subject_id = data.get("subject_id")
+        teacher_id = data.get("teacher_id")
+        room_id = data.get("room_id")
+        day_of_week = data.get("day_of_week")
+        start_time = data.get("start_time")
+        end_time = data.get("end_time")
+        lesson_type = data.get("lesson_type", "lecture")
+
+        if not all(
+            [subject_id, teacher_id, day_of_week is not None, start_time, end_time]
+        ):
+            return jsonify({"error": "Missing required fields"}), 400
+
+        if day_of_week < 0 or day_of_week > 6:
+            return jsonify({"error": "day_of_week must be 0-6"}), 400
+
+        lesson_id = generate_uuid()
+        cur.execute(
+            """INSERT INTO lessons (id, group_id, subject_id, teacher_id, room_id,
+                                   day_of_week, start_time, end_time, lesson_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                lesson_id,
+                group_id,
+                subject_id,
+                teacher_id,
+                room_id,
+                day_of_week,
+                start_time,
+                end_time,
+                lesson_type,
+            ),
+        )
+        db.commit()
+
+        log_audit(user_id, "LESSON_CREATED", lesson_id)
+
+        return jsonify({"lesson_id": lesson_id, "message": "Lesson created"}), 201
+
+
+@app.route("/api/lessons/<lesson_id>", methods=["PUT", "DELETE", "OPTIONS"])
+def modify_lesson(lesson_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        """SELECT l.*, g.organization_id
+           FROM lessons l
+           JOIN groups g ON l.group_id = g.id
+           WHERE l.id = ?""",
+        (lesson_id,),
+    )
+    lesson = cur.fetchone()
+
+    if not lesson:
+        return jsonify({"error": "Lesson not found"}), 404
+
+    if not check_organization_permission(user_id, lesson["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
+        db.commit()
+        log_audit(user_id, "LESSON_DELETED", lesson_id)
+        return jsonify({"message": "Lesson deleted"})
+
+    else:  # PUT
+        data = request.json
+        cur.execute(
+            """UPDATE lessons
+               SET subject_id = ?, teacher_id = ?, room_id = ?,
+                   day_of_week = ?, start_time = ?, end_time = ?, lesson_type = ?
+               WHERE id = ?""",
+            (
+                data.get("subject_id", lesson["subject_id"]),
+                data.get("teacher_id", lesson["teacher_id"]),
+                data.get("room_id", lesson["room_id"]),
+                data.get("day_of_week", lesson["day_of_week"]),
+                data.get("start_time", lesson["start_time"]),
+                data.get("end_time", lesson["end_time"]),
+                data.get("lesson_type", lesson["lesson_type"]),
+                lesson_id,
+            ),
+        )
+        db.commit()
+        log_audit(user_id, "LESSON_UPDATED", lesson_id)
+        return jsonify({"message": "Lesson updated"})
+
+
+# ============ SCHEDULE UPLOAD FROM EXCEL/CSV ============
+
+UPLOAD_FOLDER = "uploads"
+ALLOWED_EXTENSIONS = {"xlsx", "xls", "csv"}
+
+# Создаём папку для загрузок
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+@app.route("/api/schedules/upload", methods=["POST", "OPTIONS"])
+def upload_schedule():
+    """
+    Загрузка расписания из Excel/CSV файла
+
+    Ожидаемый формат файла:
+    Columns: group_name, day_of_week, start_time, end_time, subject_name,
+             teacher_username, room_name, lesson_type
+
+    day_of_week: 0-6 (0=Monday) или текстом (Monday, Tuesday, etc)
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Проверяем наличие файла
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+
+    if file.filename == "":
+        return jsonify({"error": "No file selected"}), 400
+
+    if not allowed_file(file.filename):
+        return jsonify({"error": "Invalid file type. Use .xlsx, .xls or .csv"}), 400
+
+    # Получаем organization_id из параметров
+    org_id = request.form.get("organization_id")
+    if not org_id:
+        return jsonify({"error": "organization_id required"}), 400
+
+    # Проверяем права
+    if not check_organization_permission(user_id, org_id, "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    # Сохраняем файл
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(UPLOAD_FOLDER, f"{generate_uuid()}_{filename}")
+    file.save(filepath)
+
+    try:
+        # Читаем файл
+        if filename.endswith(".csv"):
+            df = pd.read_csv(filepath)
+        else:
+            df = pd.read_excel(filepath)
+
+        # Проверяем обязательные колонки
+        required_columns = [
+            "group_name",
+            "day_of_week",
+            "start_time",
+            "end_time",
+            "subject_name",
+            "teacher_username",
+        ]
+
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            return (
+                jsonify(
+                    {
+                        "error": f"Missing required columns: {', '.join(missing_columns)}",
+                        "required_columns": required_columns,
+                        "found_columns": list(df.columns),
+                    }
+                ),
+                400,
+            )
+
+        db = get_db()
+        cur = db.cursor()
+
+        # Словари для кеширования ID
+        groups_cache = {}
+        subjects_cache = {}
+        teachers_cache = {}
+        rooms_cache = {}
+
+        # Mapping дней недели
+        day_mapping = {
+            "monday": 0,
+            "mon": 0,
+            "понедельник": 0,
+            "пн": 0,
+            "tuesday": 1,
+            "tue": 1,
+            "вторник": 1,
+            "вт": 1,
+            "wednesday": 2,
+            "wed": 2,
+            "среда": 2,
+            "ср": 2,
+            "thursday": 3,
+            "thu": 3,
+            "четверг": 3,
+            "чт": 3,
+            "friday": 4,
+            "fri": 4,
+            "пятница": 4,
+            "пт": 4,
+            "saturday": 5,
+            "sat": 5,
+            "суббота": 5,
+            "сб": 5,
+            "sunday": 6,
+            "sun": 6,
+            "воскресенье": 6,
+            "вс": 6,
+        }
+
+        created_count = 0
+        errors = []
+
+        for index, row in df.iterrows():
+            try:
+                # Получаем группу
+                group_name = str(row["group_name"]).strip()
+                if group_name not in groups_cache:
+                    cur.execute(
+                        "SELECT id FROM groups WHERE name = ? AND organization_id = ?",
+                        (group_name, org_id),
+                    )
+                    group = cur.fetchone()
+                    if not group:
+                        errors.append(
+                            f"Row {index + 2}: Group '{group_name}' not found"
+                        )
+                        continue
+                    groups_cache[group_name] = group["id"]
+
+                group_id = groups_cache[group_name]
+
+                # Получаем предмет
+                subject_name = str(row["subject_name"]).strip()
+                if subject_name not in subjects_cache:
+                    cur.execute(
+                        "SELECT id FROM subjects WHERE name = ? AND organization_id = ?",
+                        (subject_name, org_id),
+                    )
+                    subject = cur.fetchone()
+                    if not subject:
+                        errors.append(
+                            f"Row {index + 2}: Subject '{subject_name}' not found"
+                        )
+                        continue
+                    subjects_cache[subject_name] = subject["id"]
+
+                subject_id = subjects_cache[subject_name]
+
+                # Получаем учителя
+                teacher_username = str(row["teacher_username"]).strip()
+                if teacher_username not in teachers_cache:
+                    cur.execute(
+                        "SELECT id FROM users WHERE username = ?", (teacher_username,)
+                    )
+                    teacher = cur.fetchone()
+                    if not teacher:
+                        errors.append(
+                            f"Row {index + 2}: Teacher '{teacher_username}' not found"
+                        )
+                        continue
+                    teachers_cache[teacher_username] = teacher["id"]
+
+                teacher_id = teachers_cache[teacher_username]
+
+                # Получаем комнату (опционально)
+                room_id = None
+                if "room_name" in row and pd.notna(row["room_name"]):
+                    room_name = str(row["room_name"]).strip()
+                    if room_name not in rooms_cache:
+                        cur.execute(
+                            """SELECT r.id FROM rooms r
+                               JOIN buildings b ON r.building_id = b.id
+                               WHERE r.name = ? AND b.organization_id = ?""",
+                            (room_name, org_id),
+                        )
+                        room = cur.fetchone()
+                        if room:
+                            rooms_cache[room_name] = room["id"]
+
+                    if room_name in rooms_cache:
+                        room_id = rooms_cache[room_name]
+
+                # Парсим день недели
+                day_raw = str(row["day_of_week"]).strip().lower()
+                if day_raw.isdigit():
+                    day_of_week = int(day_raw)
+                else:
+                    day_of_week = day_mapping.get(day_raw)
+                    if day_of_week is None:
+                        errors.append(
+                            f"Row {index + 2}: Invalid day_of_week '{day_raw}'"
+                        )
+                        continue
+
+                if day_of_week < 0 or day_of_week > 6:
+                    errors.append(f"Row {index + 2}: day_of_week must be 0-6")
+                    continue
+
+                # Парсим время
+                start_time = str(row["start_time"]).strip()
+                end_time = str(row["end_time"]).strip()
+
+                # Тип урока
+                lesson_type = (
+                    str(row.get("lesson_type", "lecture")).strip()
+                    if "lesson_type" in row
+                    else "lecture"
+                )
+
+                # Проверяем дублирование
+                cur.execute(
+                    """SELECT id FROM lessons 
+                       WHERE group_id = ? AND day_of_week = ? AND start_time = ?""",
+                    (group_id, day_of_week, start_time),
+                )
+                if cur.fetchone():
+                    errors.append(f"Row {index + 2}: Lesson already exists")
+                    continue
+
+                # Создаём урок
+                lesson_id = generate_uuid()
+                cur.execute(
+                    """INSERT INTO lessons (id, group_id, subject_id, teacher_id, room_id,
+                                           day_of_week, start_time, end_time, lesson_type)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        lesson_id,
+                        group_id,
+                        subject_id,
+                        teacher_id,
+                        room_id,
+                        day_of_week,
+                        start_time,
+                        end_time,
+                        lesson_type,
+                    ),
+                )
+                created_count += 1
+
+            except Exception as e:
+                errors.append(f"Row {index + 2}: {str(e)}")
+
+        db.commit()
+
+        # Удаляем загруженный файл
+        os.remove(filepath)
+
+        log_audit(
+            user_id,
+            "SCHEDULE_UPLOADED",
+            org_id,
+            details={"created": created_count, "errors": len(errors)},
+        )
+
+        return jsonify(
+            {
+                "message": f"Schedule uploaded: {created_count} lessons created",
+                "created": created_count,
+                "errors": errors if errors else None,
+            }
+        )
+
+    except Exception as e:
+        # Удаляем файл в случае ошибки
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+
+
+@app.route("/api/schedules/template", methods=["GET", "OPTIONS"])
+def download_schedule_template():
+    """Скачать шаблон Excel файла для загрузки расписания"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    # Создаём шаблон
+    template_data = {
+        "group_name": ["ИС-101", "ИС-101", "ИС-102"],
+        "day_of_week": [0, 0, 1],  # или 'Monday', 'Monday', 'Tuesday'
+        "start_time": ["09:00", "10:45", "09:00"],
+        "end_time": ["10:30", "12:15", "10:30"],
+        "subject_name": ["Математика", "Программирование", "Физика"],
+        "teacher_username": ["teacher1", "teacher2", "teacher3"],
+        "room_name": ["101", "102", "201"],
+        "lesson_type": ["lecture", "practice", "lecture"],
+    }
+
+    df = pd.DataFrame(template_data)
+
+    # Сохраняем во временный файл
+    template_path = os.path.join(UPLOAD_FOLDER, "schedule_template.xlsx")
+    df.to_excel(template_path, index=False)
+
+    from flask import send_file
+
+    return send_file(
+        template_path, as_attachment=True, download_name="schedule_template.xlsx"
+    )
+
+
+@app.route("/api/schedules/export/<group_id>", methods=["GET", "OPTIONS"])
+def export_schedule(group_id):
+    """Экспорт расписания группы в Excel"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем расписание
+    cur.execute(
+        """SELECT l.day_of_week, l.start_time, l.end_time, l.lesson_type,
+                  s.name as subject_name, s.code as subject_code,
+                  u.username as teacher_username, 
+                  u.first_name as teacher_first_name, u.last_name as teacher_last_name,
+                  r.name as room_name, b.name as building_name,
+                  g.name as group_name
+           FROM lessons l
+           JOIN subjects s ON l.subject_id = s.id
+           JOIN users u ON l.teacher_id = u.id
+           JOIN groups g ON l.group_id = g.id
+           LEFT JOIN rooms r ON l.room_id = r.id
+           LEFT JOIN buildings b ON r.building_id = b.id
+           WHERE l.group_id = ?
+           ORDER BY l.day_of_week, l.start_time""",
+        (group_id,),
+    )
+
+    lessons = [dict(row) for row in cur.fetchall()]
+
+    if not lessons:
+        return jsonify({"error": "No schedule found"}), 404
+
+    # Конвертируем в DataFrame
+    df = pd.DataFrame(lessons)
+
+    # Добавляем читаемые названия дней
+    day_names = [
+        "Понедельник",
+        "Вторник",
+        "Среда",
+        "Четверг",
+        "Пятница",
+        "Суббота",
+        "Воскресенье",
+    ]
+    df["day_name"] = df["day_of_week"].apply(
+        lambda x: day_names[x] if 0 <= x < 7 else ""
+    )
+
+    # Переупорядочиваем колонки
+    df = df[
+        [
+            "group_name",
+            "day_name",
+            "day_of_week",
+            "start_time",
+            "end_time",
+            "subject_name",
+            "subject_code",
+            "teacher_username",
+            "teacher_first_name",
+            "teacher_last_name",
+            "room_name",
+            "building_name",
+            "lesson_type",
+        ]
+    ]
+
+    # Сохраняем
+    export_path = os.path.join(UPLOAD_FOLDER, f"schedule_{group_id}.xlsx")
+    df.to_excel(export_path, index=False)
+
+    from flask import send_file
+
+    return send_file(
+        export_path,
+        as_attachment=True,
+        download_name=f'schedule_{lessons[0]["group_name"]}.xlsx',
+    )
+
+
+# ============ NOTIFICATIONS API ============
+
+
+@app.route("/api/notifications", methods=["GET", "OPTIONS"])
+def get_notifications():
+    """Получить список уведомлений пользователя"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Параметры фильтрации
+    is_read = request.args.get("is_read")  # true/false/all
+    notification_type = request.args.get("type")  # grade, homework, event, message
+    limit = int(request.args.get("limit", 50))
+    offset = int(request.args.get("offset", 0))
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Формируем запрос
+    query = "SELECT * FROM notifications WHERE user_id = ?"
+    params = [user_id]
+
+    if is_read and is_read != "all":
+        query += " AND is_read = ?"
+        params.append(1 if is_read.lower() == "true" else 0)
+
+    if notification_type:
+        query += " AND type = ?"
+        params.append(notification_type)
+
+    query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+
+    cur.execute(query, params)
+    notifications = [dict(row) for row in cur.fetchall()]
+
+    # Получаем общее количество непрочитанных
+    cur.execute(
+        "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = 0",
+        (user_id,),
+    )
+    unread_count = cur.fetchone()["count"]
+
+    return jsonify(
+        {
+            "notifications": notifications,
+            "unread_count": unread_count,
+            "total": len(notifications),
+        }
+    )
+
+
+@app.route("/api/notifications/<notification_id>/read", methods=["PUT", "OPTIONS"])
+def mark_notification_read(notification_id):
+    """Отметить уведомление как прочитанное"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?",
+        (notification_id, user_id),
+    )
+
+    if cur.rowcount == 0:
+        return jsonify({"error": "Notification not found"}), 404
+
+    db.commit()
+
+    return jsonify({"message": "Marked as read"})
+
+
+@app.route("/api/notifications/read-all", methods=["PUT", "OPTIONS"])
+def mark_all_notifications_read():
+    """Отметить все уведомления как прочитанные"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0",
+        (user_id,),
+    )
+
+    updated_count = cur.rowcount
+    db.commit()
+
+    return jsonify(
+        {
+            "message": f"Marked {updated_count} notifications as read",
+            "count": updated_count,
+        }
+    )
+
+
+@app.route("/api/notifications/<notification_id>", methods=["DELETE", "OPTIONS"])
+def delete_notification(notification_id):
+    """Удалить уведомление"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "DELETE FROM notifications WHERE id = ? AND user_id = ?",
+        (notification_id, user_id),
+    )
+
+    if cur.rowcount == 0:
+        return jsonify({"error": "Notification not found"}), 404
+
+    db.commit()
+
+    return jsonify({"message": "Notification deleted"})
+
+
+@app.route("/api/notifications/clear", methods=["DELETE", "OPTIONS"])
+def clear_all_notifications():
+    """Удалить все прочитанные уведомления"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "DELETE FROM notifications WHERE user_id = ? AND is_read = 1", (user_id,)
+    )
+
+    deleted_count = cur.rowcount
+    db.commit()
+
+    return jsonify(
+        {"message": f"Deleted {deleted_count} notifications", "count": deleted_count}
+    )
+
+
+@app.route("/api/notifications/settings", methods=["GET", "PUT", "OPTIONS"])
+def notification_settings():
+    """Настройки уведомлений (сохраняются в profile_data пользователя)"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    if request.method == "GET":
+        # Получаем настройки (для простоты храним в отдельной таблице или в users)
+        # Здесь используем значения по умолчанию
+        return jsonify(
+            {
+                "email_enabled": True,
+                "telegram_enabled": False,
+                "notification_types": {
+                    "grade": True,
+                    "homework": True,
+                    "event": True,
+                    "message": True,
+                    "announcement": True,
+                },
+            }
+        )
+
+    else:  # PUT - обновление настроек
+        data = request.json
+        # TODO: Сохранить настройки в БД
+        # Можно добавить таблицу notification_settings или использовать JSONB поле
+
+        return jsonify({"message": "Settings updated"})
+
+
+@app.route("/api/notifications/pending/<user_id_param>", methods=["GET", "OPTIONS"])
+def get_pending_notifications_for_telegram(user_id_param):
+    """
+    Получить непрочитанные уведомления для отправки в Telegram
+    Используется Telegram ботом
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+
+    # Для бота: можно добавить API key проверку
+    # В продакшене: требовать специальный токен для бота
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем telegram_id пользователя
+    cur.execute("SELECT telegram_id FROM users WHERE id = ?", (user_id_param,))
+    user = cur.fetchone()
+
+    if not user or not user["telegram_id"]:
+        return jsonify({"notifications": []})
+
+    # Получаем непрочитанные уведомления, которые еще не отправлены в Telegram
+    cur.execute(
+        """SELECT * FROM notifications 
+           WHERE user_id = ? AND is_read = 0 AND sent_to_telegram = 0
+           ORDER BY timestamp DESC
+           LIMIT 10""",
+        (user_id_param,),
+    )
+
+    notifications = [dict(row) for row in cur.fetchall()]
+
+    return jsonify({"telegram_id": user["telegram_id"], "notifications": notifications})
+
+
+@app.route("/api/notifications/mark-telegram-sent", methods=["POST", "OPTIONS"])
+def mark_notifications_telegram_sent():
+    """Отметить уведомления как отправленные в Telegram (для бота)"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    data = request.json
+    notification_ids = data.get("notification_ids", [])
+
+    if not notification_ids:
+        return jsonify({"error": "notification_ids required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Обновляем статус
+    placeholders = ",".join(["?"] * len(notification_ids))
+    cur.execute(
+        f"UPDATE notifications SET sent_to_telegram = 1 WHERE id IN ({placeholders})",
+        notification_ids,
+    )
+
+    db.commit()
+
+    return jsonify({"message": f"Marked {cur.rowcount} notifications as sent"})
+
+
+# ============ CALENDAR-JOURNAL INTEGRATION ============
+
+
+def create_event_from_actual_lesson(actual_lesson_id):
+    """
+    Автоматическое создание события календаря из занятия
+    Вызывается при создании actual_lesson
+    """
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем данные занятия
+    cur.execute(
+        """SELECT al.id, al.date, al.topic, al.homework,
+                  l.start_time, l.end_time, l.group_id,
+                  s.name as subject_name, s.id as subject_id,
+                  u.id as teacher_id, u.username as teacher_name,
+                  g.organization_id
+           FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           JOIN users u ON l.teacher_id = u.id
+           JOIN groups g ON l.group_id = g.id
+           WHERE al.id = ?""",
+        (actual_lesson_id,),
+    )
+
+    lesson = cur.fetchone()
+    if not lesson:
+        return None
+
+    # Получаем студентов группы
+    cur.execute(
+        "SELECT user_id FROM user_groups WHERE group_id = ?", (lesson["group_id"],)
+    )
+    students = [row["user_id"] for row in cur.fetchall()]
+
+    # Создаём событие для преподавателя
+    teacher_event_id = generate_uuid()
+
+    title = f"Занятие: {lesson['subject_name']}"
+    description = (
+        lesson["topic"]
+        if lesson["topic"]
+        else f"Занятие по предмету {lesson['subject_name']}"
+    )
+    if lesson["homework"]:
+        description += f"\n\nДомашнее задание: {lesson['homework']}"
+
+    cur.execute(
+        """INSERT INTO events (id, owner_id, organization_id, title, description, 
+                              date, time, end_time, event_type, privacy, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'lesson', 'public', ?)""",
+        (
+            teacher_event_id,
+            lesson["teacher_id"],
+            lesson["organization_id"],
+            title,
+            description,
+            lesson["date"],
+            lesson["start_time"],
+            lesson["end_time"],
+            int(time.time()),
+        ),
+    )
+
+    # Создаём события для студентов (как shared events)
+    for student_id in students:
+        share_id = generate_uuid()
+        cur.execute(
+            """INSERT INTO shared_events (id, event_id, user_id, accepted, forbid_edit, allow_comments)
+               VALUES (?, ?, ?, 1, 1, 0)""",
+            (share_id, teacher_event_id, student_id),
+        )
+
+    db.commit()
+
+    return teacher_event_id
+
+
+def update_event_from_actual_lesson(actual_lesson_id):
+    """
+    Обновление события календаря при изменении занятия
+    """
+    db = get_db()
+    cur = db.cursor()
+
+    # Находим связанное событие
+    cur.execute(
+        """SELECT e.id FROM events e
+           JOIN actual_lessons al ON e.date = al.date 
+           WHERE al.id = ? AND e.event_type = 'lesson'
+           LIMIT 1""",
+        (actual_lesson_id,),
+    )
+
+    event = cur.fetchone()
+    if not event:
+        # Если события нет - создаём
+        return create_event_from_actual_lesson(actual_lesson_id)
+
+    # Получаем обновлённые данные занятия
+    cur.execute(
+        """SELECT al.topic, al.homework, s.name as subject_name
+           FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           WHERE al.id = ?""",
+        (actual_lesson_id,),
+    )
+
+    lesson = cur.fetchone()
+    if not lesson:
+        return None
+
+    # Обновляем событие
+    title = f"Занятие: {lesson['subject_name']}"
+    description = (
+        lesson["topic"]
+        if lesson["topic"]
+        else f"Занятие по предмету {lesson['subject_name']}"
+    )
+    if lesson["homework"]:
+        description += f"\n\nДомашнее задание: {lesson['homework']}"
+
+    cur.execute(
+        """UPDATE events 
+           SET title = ?, description = ?, version = version + 1
+           WHERE id = ?""",
+        (title, description, event["id"]),
+    )
+
+    db.commit()
+
+    return event["id"]
+
+
+@app.route("/api/calendar/sync-lessons", methods=["POST", "OPTIONS"])
+def sync_lessons_to_calendar():
+    """
+    Синхронизация всех занятий группы с календарём
+    Создаёт события для всех actual_lessons, у которых нет событий
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    group_id = data.get("group_id")
+    start_date = data.get("start_date")  # опционально
+    end_date = data.get("end_date")  # опционально
+
+    if not group_id:
+        return jsonify({"error": "group_id required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем права
+    cur.execute("SELECT organization_id FROM groups WHERE id = ?", (group_id,))
+    group = cur.fetchone()
+
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    # Получаем все actual_lessons группы
+    query = """SELECT al.id, al.date
+               FROM actual_lessons al
+               JOIN lessons l ON al.lesson_id = l.id
+               WHERE l.group_id = ?"""
+
+    params = [group_id]
+
+    if start_date:
+        query += " AND al.date >= ?"
+        params.append(start_date)
+
+    if end_date:
+        query += " AND al.date <= ?"
+        params.append(end_date)
+
+    cur.execute(query, params)
+    actual_lessons = cur.fetchall()
+
+    synced_count = 0
+
+    for lesson in actual_lessons:
+        # Проверяем, есть ли уже событие
+        cur.execute(
+            """SELECT e.id FROM events e
+               WHERE e.date = ? AND e.event_type = 'lesson'
+               LIMIT 1""",
+            (lesson["date"],),
+        )
+
+        if not cur.fetchone():
+            # Создаём событие
+            create_event_from_actual_lesson(lesson["id"])
+            synced_count += 1
+
+    log_audit(user_id, "CALENDAR_SYNCED", group_id)
+
+    return jsonify(
+        {
+            "message": f"Synced {synced_count} lessons to calendar",
+            "synced_count": synced_count,
+            "total_lessons": len(actual_lessons),
+        }
+    )
+
+
+@app.route("/api/calendar/user/<user_id_param>", methods=["GET", "OPTIONS"])
+def get_user_calendar(user_id_param):
+    """
+    Получить полный календарь пользователя:
+    - Личные события
+    - Shared события
+    - События из занятий (для студентов и преподавателей)
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+
+    auth_user_id = get_auth_user()
+    if not auth_user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    # Проверяем права: либо свой календарь, либо админ
+    if auth_user_id != user_id_param:
+        # TODO: добавить проверку прав админа
+        pass
+
+    db = get_db()
+    cur = db.cursor()
+
+    start_date = request.args.get("start_date")  # YYYY-MM-DD
+    end_date = request.args.get("end_date")
+
+    # 1. Личные события
+    query_own = "SELECT * FROM events WHERE owner_id = ?"
+    params_own = [user_id_param]
+
+    if start_date and end_date:
+        query_own += " AND date BETWEEN ? AND ?"
+        params_own.extend([start_date, end_date])
+
+    query_own += " ORDER BY date, time"
+
+    cur.execute(query_own, params_own)
+    own_events = [dict(row) for row in cur.fetchall()]
+
+    # 2. Shared события
+    query_shared = """SELECT e.* FROM events e
+                     JOIN shared_events s ON e.id = s.event_id
+                     WHERE s.user_id = ? AND s.accepted = 1"""
+    params_shared = [user_id_param]
+
+    if start_date and end_date:
+        query_shared += " AND e.date BETWEEN ? AND ?"
+        params_shared.extend([start_date, end_date])
+
+    query_shared += " ORDER BY e.date, e.time"
+
+    cur.execute(query_shared, params_shared)
+    shared_events = [dict(row) for row in cur.fetchall()]
+
+    # Объединяем и форматируем
+    all_events = own_events + shared_events
+
+    for ev in all_events:
+        ev["recurring_options"] = (
+            json.loads(ev["recurring_options"]) if ev["recurring_options"] else None
+        )
+        ev["subtasks"] = json.loads(ev["subtasks"]) if ev["subtasks"] else None
+        ev["eventType"] = ev["event_type"]
+        ev["type"] = ev["privacy"]
+        ev["name"] = ev["id"]
+        ev["is_owner"] = ev["owner_id"] == user_id_param
+
+    return jsonify(
+        {
+            "events": all_events,
+            "total": len(all_events),
+            "own_count": len(own_events),
+            "shared_count": len(shared_events),
+        }
+    )
+
+
+# Модифицируем функцию generate_actual_lessons для автоматического создания событий
+
+# НАЙДИТЕ функцию generate_actual_lessons и ДОБАВЬТЕ в конце перед db.commit():
+#
+# # Создаём события календаря для новых занятий
+# for lesson in lessons:
+#     if lesson["day_of_week"] == day_of_week:
+#         cur.execute(
+#             "SELECT id FROM actual_lessons WHERE lesson_id = ? AND date = ?",
+#             (lesson["id"], current_date.strftime("%Y-%m-%d"))
+#         )
+#         new_actual = cur.fetchone()
+#         if new_actual:
+#             create_event_from_actual_lesson(new_actual["id"])
+
+# ============ ACTUAL LESSONS (Journal) ============
+
+
+@app.route("/api/actual-lessons/generate", methods=["POST", "OPTIONS"])
+def generate_actual_lessons():
+    """Генерация actual_lessons из расписания для диапазона дат"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    group_id = data.get("group_id")
+    start_date = data.get("start_date")  # YYYY-MM-DD
+    end_date = data.get("end_date")
+
+    if not all([group_id, start_date, end_date]):
+        return jsonify({"error": "Missing required fields"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем группу
+    cur.execute("SELECT organization_id FROM groups WHERE id = ?", (group_id,))
+    group = cur.fetchone()
+
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    if not check_organization_permission(user_id, group["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    # Получаем расписание группы
+    cur.execute("SELECT * FROM lessons WHERE group_id = ?", (group_id,))
+    lessons = cur.fetchall()
+
+    from datetime import datetime, timedelta
+
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+
+    created_count = 0
+    current_date = start
+
+    while current_date <= end:
+        day_of_week = current_date.weekday()  # 0 = Monday
+
+        # Находим уроки для этого дня недели
+        for lesson in lessons:
+            if lesson["day_of_week"] == day_of_week:
+                # Проверяем, не существует ли уже
+                cur.execute(
+                    "SELECT id FROM actual_lessons WHERE lesson_id = ? AND date = ?",
+                    (lesson["id"], current_date.strftime("%Y-%m-%d")),
+                )
+                if not cur.fetchone():
+                    actual_id = generate_uuid()
+                    cur.execute(
+                        "INSERT INTO actual_lessons (id, lesson_id, date) VALUES (?, ?, ?)",
+                        (actual_id, lesson["id"], current_date.strftime("%Y-%m-%d")),
+                    )
+                    created_count += 1
+
+        current_date += timedelta(days=1)
+
+    db.commit()
+    log_audit(user_id, "ACTUAL_LESSONS_GENERATED", group_id)
+
+    return jsonify(
+        {"message": f"Generated {created_count} actual lessons", "count": created_count}
+    )
+
+
+@app.route(
+    "/api/actual-lessons/date/<date>/group/<group_id>", methods=["GET", "OPTIONS"]
+)
+def get_actual_lessons_by_date(date, group_id):
+    """Получить все занятия группы на определенную дату"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        """SELECT al.*, l.start_time, l.end_time, l.lesson_type,
+                  s.name as subject_name, s.code as subject_code,
+                  u.username as teacher_name, u.first_name as teacher_first_name,
+                  u.last_name as teacher_last_name,
+                  r.name as room_name, b.name as building_name
+           FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           JOIN users u ON l.teacher_id = u.id
+           LEFT JOIN rooms r ON l.room_id = r.id
+           LEFT JOIN buildings b ON r.building_id = b.id
+           WHERE al.date = ? AND l.group_id = ?
+           ORDER BY l.start_time""",
+        (date, group_id),
+    )
+
+    return jsonify([dict(row) for row in cur.fetchall()])
+
+
+@app.route("/api/actual-lessons/<actual_lesson_id>", methods=["GET", "PUT", "OPTIONS"])
+def manage_actual_lesson(actual_lesson_id):
+    """Получить или обновить конкретное занятие"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    if request.method == "GET":
+        # Получить детали занятия с оценками и посещаемостью
+        cur.execute(
+            """SELECT al.*, l.start_time, l.end_time, l.lesson_type, l.group_id,
+                      s.name as subject_name, s.id as subject_id,
+                      u.username as teacher_name, u.id as teacher_id,
+                      r.name as room_name
+               FROM actual_lessons al
+               JOIN lessons l ON al.lesson_id = l.id
+               JOIN subjects s ON l.subject_id = s.id
+               JOIN users u ON l.teacher_id = u.id
+               LEFT JOIN rooms r ON l.room_id = r.id
+               WHERE al.id = ?""",
+            (actual_lesson_id,),
+        )
+        lesson = cur.fetchone()
+
+        if not lesson:
+            return jsonify({"error": "Lesson not found"}), 404
+
+        lesson_dict = dict(lesson)
+
+        # Получаем студентов группы с оценками и посещаемостью
+        cur.execute(
+            """SELECT u.id, u.username, u.first_name, u.last_name,
+                      m.id as mark_id, m.value as mark_value, m.comment as mark_comment,
+                      a.id as attendance_id, a.status as attendance_status
+               FROM user_groups ug
+               JOIN users u ON ug.user_id = u.id
+               LEFT JOIN marks m ON m.student_id = u.id AND m.actual_lesson_id = ?
+               LEFT JOIN attendance a ON a.student_id = u.id AND a.actual_lesson_id = ?
+               WHERE ug.group_id = ?
+               ORDER BY u.last_name, u.first_name""",
+            (actual_lesson_id, actual_lesson_id, lesson["group_id"]),
+        )
+
+        lesson_dict["students"] = [dict(row) for row in cur.fetchall()]
+
+        return jsonify(lesson_dict)
+
+    else:  # PUT - обновить тему, ДЗ, заметки
+        data = request.json
+
+        cur.execute(
+            """UPDATE actual_lessons
+               SET topic = ?, homework = ?, notes = ?
+               WHERE id = ?""",
+            (
+                data.get("topic"),
+                data.get("homework"),
+                data.get("notes"),
+                actual_lesson_id,
+            ),
+        )
+        db.commit()
+
+        log_audit(user_id, "ACTUAL_LESSON_UPDATED", actual_lesson_id)
+
+        # Если добавлено домашнее задание - уведомить студентов
+        if data.get("homework"):
+            cur.execute(
+                """SELECT ug.user_id
+                   FROM actual_lessons al
+                   JOIN lessons l ON al.lesson_id = l.id
+                   JOIN user_groups ug ON l.group_id = ug.group_id
+                   WHERE al.id = ?""",
+                (actual_lesson_id,),
+            )
+            for student in cur.fetchall():
+                create_notification(
+                    student["user_id"],
+                    "homework",
+                    f"Новое домашнее задание: {data.get('homework')[:100]}",
+                )
+
+        return jsonify({"message": "Lesson updated"})
+
+
+# ============ TELEGRAM BOT SUPPORT ENDPOINTS ============
+
+
+@app.route("/api/telegram/users-with-notifications", methods=["GET", "OPTIONS"])
+def get_users_with_telegram_notifications():
+    """
+    Получить список пользователей с привязанным Telegram, у которых есть непрочитанные уведомления
+    Для использования ботом
+    """
+    if request.method == "OPTIONS":
+        return "", 200
+
+    # В продакшене: добавить API key проверку для бота
+    # bot_api_key = request.headers.get('X-Bot-API-Key')
+    # if bot_api_key != 'YOUR_SECURE_BOT_KEY':
+    #     return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем пользователей с telegram_id и непрочитанными уведомлениями
+    cur.execute(
+        """SELECT DISTINCT u.id as user_id, u.telegram_id
+           FROM users u
+           JOIN notifications n ON u.id = n.user_id
+           WHERE u.telegram_id IS NOT NULL
+           AND n.is_read = 0
+           AND n.sent_to_telegram = 0"""
+    )
+
+    users = [dict(row) for row in cur.fetchall()]
+
+    return jsonify(users)
+
+
+@app.route("/api/telegram/verify-user", methods=["POST", "OPTIONS"])
+def verify_telegram_user():
+    """Проверить существование пользователя по User ID (для бота)"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    data = request.json
+    user_id = data.get("user_id")
+
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "SELECT id, username, first_name, last_name FROM users WHERE id = ?", (user_id,)
+    )
+
+    user = cur.fetchone()
+
+    if not user:
+        return jsonify({"exists": False}), 404
+
+    return jsonify(
+        {
+            "exists": True,
+            "username": user["username"],
+            "first_name": user["first_name"],
+            "last_name": user["last_name"],
+        }
+    )
+
+
 # ========== УДАЛЕНИЕ ПРОСРОЧЕННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
 def check_expired_users():
     with app.app_context():
@@ -1913,6 +4623,7 @@ def check_expired_users():
             cur.execute("DELETE FROM users WHERE id = ?", (row["id"],))
         db.commit()
     Timer(86400, check_expired_users).start()
+
 
 # Запускаем проверку просроченных пользователей при старте
 check_expired_users()
