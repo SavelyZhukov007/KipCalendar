@@ -1429,358 +1429,6 @@ def add_mark():
 def search_users():
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    email = request.args.get("email")
-    user_id = request.args.get("user_id")
-
-    db = get_db()
-    cur = db.cursor()
-
-    if email:
-        cur.execute("SELECT id, username, email FROM users WHERE email = ?", (email,))
-    elif user_id:
-        cur.execute("SELECT id, username, email FROM users WHERE id = ?", (user_id,))
-    else:
-        return jsonify({"error": "Provide email or user_id"}), 400
-
-    user = cur.fetchone()
-    if user:
-        return jsonify(dict(user))
-    return jsonify({"error": "User not found"}), 404
-
-
-@app.route("/api/chats/create", methods=["POST", "OPTIONS"])
-def create_chat():
-    if request.method == "OPTIONS":
-        return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.json
-    target_user_id = data.get("user_id")
-    my_id = get_user_id(username)
-
-    db = get_db()
-    cur = db.cursor()
-
-    # Проверяем существующий чат
-    cur.execute(
-        """
-        SELECT c.id FROM chats c
-        JOIN chat_members cm1 ON c.id = cm1.chat_id
-        JOIN chat_members cm2 ON c.id = cm2.chat_id
-        WHERE c.type = 'direct' 
-        AND cm1.user_id = ? AND cm2.user_id = ?
-    """,
-        (my_id, target_user_id),
-    )
-
-    existing = cur.fetchone()
-    if existing:
-        return jsonify({"chat_id": existing[0]})
-
-    # Создаем новый чат
-    cur.execute(
-        "INSERT INTO chats (type, created_at) VALUES ('direct', ?)", (int(time.time()),)
-    )
-    chat_id = cur.lastrowid
-
-    cur.execute(
-        "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
-        (chat_id, my_id, int(time.time())),
-    )
-    cur.execute(
-        "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
-        (chat_id, target_user_id, int(time.time())),
-    )
-
-    db.commit()
-    return jsonify({"chat_id": chat_id})
-
-
-@app.route("/api/chats", methods=["GET", "OPTIONS"])
-def get_chats():
-    if request.method == "OPTIONS":
-        return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    my_id = get_user_id(username)
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute(
-        """
-        SELECT c.id, c.type, c.name, c.created_at,
-               (SELECT u.username FROM users u 
-                JOIN chat_members cm ON u.id = cm.user_id 
-                WHERE cm.chat_id = c.id AND cm.user_id != ? LIMIT 1) as other_user,
-               (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) as message_count
-        FROM chats c
-        JOIN chat_members cm ON c.id = cm.chat_id
-        WHERE cm.user_id = ?
-        ORDER BY c.created_at DESC
-    """,
-        (my_id, my_id),
-    )
-
-    chats = [dict(row) for row in cur.fetchall()]
-    return jsonify(chats)
-
-
-@app.route("/api/chats/<int:chat_id>/messages", methods=["GET", "POST", "OPTIONS"])
-def chat_messages(chat_id):
-    if request.method == "OPTIONS":
-        return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    my_id = get_user_id(username)
-    db = get_db()
-    cur = db.cursor()
-
-    # Проверяем доступ
-    cur.execute(
-        "SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, my_id)
-    )
-    if not cur.fetchone():
-        return jsonify({"error": "Access denied"}), 403
-
-    if request.method == "GET":
-        cur.execute(
-            """
-            SELECT m.*, u.username as sender_name,
-                   (SELECT COUNT(*) FROM message_attachments WHERE message_id = m.id) as attachment_count
-            FROM messages m
-            JOIN users u ON m.sender_id = u.id
-            WHERE m.chat_id = ?
-            ORDER BY m.sent_at ASC
-        """,
-            (chat_id,),
-        )
-        messages = [dict(row) for row in cur.fetchall()]
-        return jsonify(messages)
-
-    else:  # POST
-        data = request.json
-        content = data.get("content", "")
-        subject = data.get("subject")
-        reply_to = data.get("reply_to")
-
-        if not content.strip():
-            return jsonify({"error": "Content required"}), 400
-
-        cur.execute(
-            """
-            INSERT INTO messages (chat_id, sender_id, subject, content, sent_at, reply_to)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,
-            (chat_id, my_id, subject, content, int(time.time()), reply_to),
-        )
-        message_id = cur.lastrowid
-        db.commit()
-
-        return jsonify({"message_id": message_id, "sent_at": int(time.time())})
-
-
-@app.route("/api/messages/<int:message_id>/attach", methods=["POST", "OPTIONS"])
-def attach_file(message_id):
-    if request.method == "OPTIONS":
-        return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    if "file" not in request.files:
-        return jsonify({"error": "No file"}), 400
-
-    file = request.files["file"]
-    filename = file.filename
-    file_data = file.read()
-    file_size = len(file_data)
-    mime_type = file.content_type
-
-    db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        """
-        INSERT INTO message_attachments (message_id, filename, file_data, file_size, mime_type, uploaded_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """,
-        (message_id, filename, file_data, file_size, mime_type, int(time.time())),
-    )
-    db.commit()
-
-    return jsonify({"attachment_id": cur.lastrowid})
-
-
-@app.route("/api/attachments/<int:attachment_id>", methods=["GET", "OPTIONS"])
-def get_attachment(attachment_id):
-    if request.method == "OPTIONS":
-        return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        "SELECT filename, file_data, mime_type FROM message_attachments WHERE id = ?",
-        (attachment_id,),
-    )
-    att = cur.fetchone()
-
-    if not att:
-        return jsonify({"error": "Not found"}), 404
-
-    from flask import send_file
-    import io
-
-    return send_file(
-        io.BytesIO(att["file_data"]),
-        mimetype=att["mime_type"],
-        download_name=att["filename"],
-    )
-
-
-# ========== ОРГАНИЗАЦИИ API ==========
-
-
-@app.route("/api/organizations/create", methods=["POST", "OPTIONS"])
-def create_organization():
-    if request.method == "OPTIONS":
-        return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.json
-    name = data.get("name")
-    short_name = data.get("short_name")
-    org_type = data.get("type", "education")
-
-    if not name:
-        return jsonify({"error": "Name required"}), 400
-
-    my_id = get_user_id(username)
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute(
-        """
-        INSERT INTO organizations (name, short_name, type, created_at, created_by)
-        VALUES (?, ?, ?, ?, ?)
-    """,
-        (name, short_name, org_type, int(time.time()), my_id),
-    )
-    org_id = cur.lastrowid
-
-    # Создатель становится администратором
-    cur.execute(
-        """
-        INSERT INTO organization_members (organization_id, user_id, roles, current_role, joined_at)
-        VALUES (?, ?, ?, ?, ?)
-    """,
-        (org_id, my_id, json.dumps(["admin"]), "admin", int(time.time())),
-    )
-
-    db.commit()
-    return jsonify({"organization_id": org_id})
-
-
-@app.route(
-    "/api/organizations/<int:org_id>/invitations/create", methods=["POST", "OPTIONS"]
-)
-def create_invitation(org_id):
-    if request.method == "OPTIONS":
-        return "", 200
-    username = get_auth_user()
-    if not username:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    data = request.json
-    role = data.get("role")
-    max_uses = data.get("max_uses", -1)
-
-    if role not in ["admin", "teacher", "student"]:
-        return jsonify({"error": "Invalid role"}), 400
-
-    my_id = get_user_id(username)
-    db = get_db()
-    cur = db.cursor()
-
-    # Проверяем права (только админы)
-    cur.execute(
-        """
-        SELECT roles FROM organization_members 
-        WHERE organization_id = ? AND user_id = ?
-    """,
-        (org_id, my_id),
-    )
-    member = cur.fetchone()
-    if not member or "admin" not in json.loads(member[0]):
-        return jsonify({"error": "Permission denied"}), 403
-
-    # Генерируем токен
-    token = secrets.token_urlsafe(32)
-    expires_at = int(time.time()) + (7 * 24 * 60 * 60)  # 7 дней
-
-    cur.execute(
-        """
-        INSERT INTO invitations (organization_id, role, token, created_at, expires_at, max_uses)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """,
-        (org_id, role, token, int(time.time()), expires_at, max_uses),
-    )
-    db.commit()
-
-    invite_url = f"http://localhost:3000/invite/{token}"
-    return jsonify({"invite_url": invite_url, "token": token})
-
-
-@app.route("/api/invitations/<token>", methods=["GET", "OPTIONS"])
-def get_invitation(token):
-    if request.method == "OPTIONS":
-        return "", 200
-
-    db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        """
-        SELECT i.*, o.name as org_name, o.short_name as org_short_name
-        FROM invitations i
-        JOIN organizations o ON i.organization_id = o.id
-        WHERE i.token = ?
-    """,
-        (token,),
-    )
-    invite = cur.fetchone()
-
-    if not invite:
-        return jsonify({"error": "Invalid invitation"}), 404
-
-    if invite["expires_at"] < int(time.time()):
-        return jsonify({"error": "Invitation expired"}), 410
-
-    if invite["max_uses"] != -1 and invite["uses"] >= invite["max_uses"]:
-        return jsonify({"error": "Invitation limit reached"}), 410
-
-    return jsonify(dict(invite))
-
-
-# ========== MESSENGER FIXES ==========
-
-
-@app.route("/api/user/search", methods=["GET", "OPTIONS"])
-def search_users():
-    if request.method == "OPTIONS":
-        return "", 200
 
     user_id = get_auth_user()
     if not user_id:
@@ -1966,7 +1614,67 @@ def chat_messages(chat_id):
         return jsonify({"message_id": message_id, "sent_at": int(time.time())})
 
 
-# ========== ORGANIZATIONS FIXES ==========
+@app.route("/api/messages/<int:message_id>/attach", methods=["POST", "OPTIONS"])
+def attach_file(message_id):
+    if request.method == "OPTIONS":
+        return "", 200
+    username = get_auth_user()
+    if not username:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file"}), 400
+
+    file = request.files["file"]
+    filename = file.filename
+    file_data = file.read()
+    file_size = len(file_data)
+    mime_type = file.content_type
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        """
+        INSERT INTO message_attachments (message_id, filename, file_data, file_size, mime_type, uploaded_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """,
+        (message_id, filename, file_data, file_size, mime_type, int(time.time())),
+    )
+    db.commit()
+
+    return jsonify({"attachment_id": cur.lastrowid})
+
+
+@app.route("/api/attachments/<int:attachment_id>", methods=["GET", "OPTIONS"])
+def get_attachment(attachment_id):
+    if request.method == "OPTIONS":
+        return "", 200
+    username = get_auth_user()
+    if not username:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        "SELECT filename, file_data, mime_type FROM message_attachments WHERE id = ?",
+        (attachment_id,),
+    )
+    att = cur.fetchone()
+
+    if not att:
+        return jsonify({"error": "Not found"}), 404
+
+    from flask import send_file
+    import io
+
+    return send_file(
+        io.BytesIO(att["file_data"]),
+        mimetype=att["mime_type"],
+        download_name=att["filename"],
+    )
+
+
+# ========== ОРГАНИЗАЦИИ API ==========
 
 
 @app.route("/api/organizations/create", methods=["POST", "OPTIONS"])
@@ -2098,12 +1806,11 @@ def get_invitation(token):
 
     return jsonify(dict(invite))
 
-
 @app.route("/api/invitations/<token>/accept", methods=["POST", "OPTIONS"])
 def accept_invitation(token):
     if request.method == "OPTIONS":
         return "", 200
-
+    
     user_id = get_auth_user()
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
@@ -2176,12 +1883,11 @@ def accept_invitation(token):
     # Увеличиваем счетчик использований
     cur.execute("UPDATE invitations SET uses = uses + 1 WHERE id = ?", (invite["id"],))
     db.commit()
-
-    log_audit(user_id, "INVITATION_ACCEPTED", invite["id"])
+    
+    log_audit(user_id, 'INVITATION_ACCEPTED', invite["id"])
 
     return jsonify({"message": "Joined organization", "organization_id": org_id})
-
-
+# ========== УДАЛЕНИЕ ПРОСРОЧЕННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
 def check_expired_users():
     with app.app_context():
         db = get_db()
@@ -2208,8 +1914,7 @@ def check_expired_users():
         db.commit()
     Timer(86400, check_expired_users).start()
 
-
+# Запускаем проверку просроченных пользователей при старте
 check_expired_users()
-# savelyhing test run
 if __name__ == "__main__":
     socketio.run(app, port=5000, debug=True, host="0.0.0.0")
