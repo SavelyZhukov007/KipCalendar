@@ -1,0 +1,136 @@
+You are an expert full-stack developer specializing in building educational platforms. Your task is to create a complete, fully functional electronic journal and calendar system called "KipCalendar". This platform integrates an electronic gradebook (journal) for schools/universities, a personal and shared calendar, schedule creation and loading, a messenger for communication, and a Telegram bot for notifications. The system must support user roles (admin, teacher, student, curator), organizations (e.g., schools), groups, subjects, lessons, grades, attendance, homework, events, tasks, and real-time updates.
+
+Base your development on the provided code snippets from the existing prototype. Expand and integrate them to form a cohesive platform. The backend is in Python with Flask, SQLite (migrate to PostgreSQL for production), Flask-Mail, Flask-SocketIO, and JWT for auth. The frontend is in React with Material-UI, react-calendar, date-fns, socket.io-client, and other libraries. Add a Telegram bot using python-telegram-bot library.
+
+Follow these steps precisely to build the platform. Output the complete code for backend, frontend, and bot, along with setup instructions, database schema, and deployment notes. Ensure security (e.g., hashed passwords, JWT validation, input sanitization), scalability, and user-friendly UI/UX.
+
+### Step 1: Overall Architecture Overview
+- **Backend (Flask App):** Handle API endpoints for auth, users, organizations, groups, subjects, lessons, schedules, journal (grades, attendance, homework), calendar events (personal and integrated with journal), messenger (real-time chat), notifications.
+- **Frontend (React App):** Pages for login/register/verification, dashboard (calendar with events/tasks), profile, schedule viewer/editor, journal viewer/editor, messenger, organization management.
+- **Database:** Use SQLite for dev, PostgreSQL for prod. Schema includes users, organizations, groups, subjects, lessons, actual_lessons (for journal), marks, attendance, events (calendar), chats/messages, notifications, telegram_links.
+- **Real-time:** Use SocketIO for chat updates, live notifications, collaborative editing (e.g., shared events).
+- **Notifications:** Email for verification/resets, Telegram bot for push notifications (grades, homework, events).
+- **Integrations:** Calendar integrates personal events with journal/schedule (e.g., auto-add lesson events). Schedule can be uploaded via Excel/CSV and parsed.
+- **Security:** JWT auth, role-based access (RBAC), email verification, password reset, audit logs.
+- **TG Bot:** Separate script that polls backend or uses webhooks for notifications. Users link TG account via /start with user_id and app password.
+
+### Step 2: Database Schema (SQL for PostgreSQL/SQLite)
+Create the following tables. Expand from the provided app_test.py schema.
+
+- **users**: id (UUID primary), username (unique), password_hash, email (unique), email_verified (bool), verification_code, verification_expires (timestamp), roles (JSON array: ['student', 'teacher', 'admin', 'curator']), current_role, logout_timestamp, first_name, last_name, middle_name, telegram_id (optional for bot linkage).
+- **organizations**: id (UUID), name, short_name, type ('education'), created_at, owner_id (FK users).
+- **organization_members**: organization_id (FK), user_id (FK), roles (JSON array), current_role, joined_at, profile_data (JSON).
+- **invitations**: id (UUID), organization_id (FK), token (unique), role, expires_at, max_uses, uses.
+- **buildings**: id (UUID), organization_id (FK), name, address.
+- **rooms**: id (UUID), building_id (FK), name, max_groups.
+- **groups**: id (UUID), organization_id (FK), name, specialty, course, group_number, admission_year, type, curator_id (FK users), building_id (FK).
+- **user_groups**: user_id (FK), group_id (FK).
+- **subjects**: id (UUID), organization_id (FK), name, code, description.
+- **group_subjects**: id (UUID), group_id (FK), subject_id (FK), total_hours, teacher_id (FK users).
+- **lessons**: id (UUID), group_id (FK), subject_id (FK), teacher_id (FK), room_id (FK), day_of_week (int 0-6), start_time (time), end_time (time), type ('lecture', 'practice', etc.).
+- **actual_lessons**: id (UUID), lesson_id (FK), date (date), topic, homework, notes.
+- **marks**: id (UUID), actual_lesson_id (FK), student_id (FK users), value (string, e.g., '5', 'A'), comment, date.
+- **attendance**: id (UUID), actual_lesson_id (FK), student_id (FK users), status ('present', 'absent', 'late'), note.
+- **events**: id (UUID), user_id (FK), organization_id (optional FK), title, description, date (date), time (time), end_date, end_time, event_type ('plan', 'task', 'lesson' for integration), content (markdown for plans), subtasks (JSON for tasks), recurring_options (JSON), shared_with (JSON array of user_ids), forbid_edit (bool), allow_comments (bool), password (for private shares).
+- **event_history**: id (UUID), event_id (FK), user_id (FK), field_changed, old_value, new_value, timestamp.
+- **event_comments**: id (UUID), event_id (FK), user_id (FK), content, timestamp.
+- **chats**: id (UUID), type ('private', 'group'), participants (JSON array user_ids), name (for groups), created_at.
+- **messages**: id (UUID), chat_id (FK), sender_id (FK users), content, timestamp, edited (bool), reply_to (FK messages), file_url, file_type.
+- **notifications**: id (UUID), user_id (FK), type ('grade', 'homework', 'event', 'message'), content, timestamp, is_read (bool).
+- **audit_logs**: id (UUID), user_id (FK), action, details (JSON), timestamp.
+
+Use migrations (e.g., Alembic) for schema changes.
+
+### Step 3: Backend Implementation (Expand app_test.py)
+- **Setup:** Use Flask, Flask-CORS, sqlite3/postgresql, jwt, hashlib, flask_mail, flask_socketio, secrets. Add libraries: psycopg2 (for PG), alembic (migrations), python-telegram-bot (for bot, but separate script), pandas/openpyxl (for schedule import).
+- **Auth Endpoints:**
+  - POST /register: Create user, send verification email with code. Store hashed password (sha256).
+  - POST /login: Verify credentials, return JWT if email verified.
+  - POST /verify: Check code, mark verified, return JWT.
+  - POST /resend-code: Resend verification email.
+  - POST /forgot-password: Send reset code to email.
+  - POST /reset-password: Verify code, update password.
+  - GET /me: Return user info from JWT.
+  - POST /logout: Update logout_timestamp, invalidate sessions.
+- **User Management:**
+  - GET/PUT /users/<id>: Profile update (names, role switch if allowed).
+  - GET /users/search: Search users by username/email for sharing/chats.
+- **Organization Management:**
+  - POST /api/organizations/create: Admin creates org, auto-join as owner.
+  - GET /api/organizations: List user's orgs.
+  - POST /api/invitations/create: Generate invite token with role/expiry.
+  - GET /api/invitations/<token>: Check invite details.
+  - POST /api/invitations/<token>/accept: Join org with role.
+  - POST /api/organizations/<id>/buildings: Add buildings/rooms.
+  - POST /api/organizations/<id>/groups: Create groups, assign curator.
+  - POST /api/groups/<id>/users: Add students/teachers to groups.
+- **Subjects & Lessons:**
+  - CRUD /api/subjects: Create subjects.
+  - CRUD /api/group-subjects: Assign subjects to groups with hours/teacher.
+  - CRUD /api/lessons: Define weekly schedule (day, time, room).
+  - POST /api/actual-lessons: Generate daily lessons from schedule, or manual.
+- **Journal (Electronic Gradebook):**
+  - GET /api/actual-lessons/<id>: Get lesson details, marks, attendance.
+  - POST /api/marks: Teacher adds grade to student for lesson.
+  - POST /api/attendance: Mark attendance.
+  - PUT /api/actual-lessons/<id>: Update topic/homework/notes.
+  - GET /api/journal/group/<group_id>/date/<date>: Full journal for day.
+  - GET /api/journal/student/<student_id>/subject/<subject_id>: Grades history.
+- **Calendar & Events:**
+  - CRUD /api/events: Create personal/shared events. Integrate with journal: auto-create 'lesson' events from actual_lessons.
+  - POST /api/events/<id>/share: Share with users, set forbid_edit/allow_comments.
+  - GET /api/events/<id>/history: Change log.
+  - POST/GET /api/events/<id>/comments: Add/view comments if allowed.
+  - For integration: When creating actual_lesson, create linked event. Sync updates.
+  - Recurring events: Handle weekly/monthly repeats (e.g., for schedules).
+- **Schedule Management:**
+  - POST /api/schedules/upload: Upload Excel/CSV, parse with pandas/openpyxl. Columns: group, day, lesson_num, subject, teacher, room, time.
+  - Process: Create lessons from file, validate subjects/users/rooms.
+  - GET /api/schedules/group/<group_id>: Export weekly schedule.
+  - Auto-generate actual_lessons for future dates based on lessons.
+- **Messenger (Kipswift):**
+  - CRUD /api/chats: Create private/group chats.
+  - POST /api/messages: Send message, emit via SocketIO.
+  - GET /api/messages/chat/<chat_id>: History.
+  - SocketIO events: 'message', 'typing', 'read'.
+- **Notifications:**
+  - When grade/homework/event/message added, create notification, emit via SocketIO, send email if critical, queue for TG bot.
+  - GET /api/notifications: List user's notifications, mark read.
+- **Audit & Cleanup:**
+  - Log actions in audit_logs.
+  - Timer to delete expired users/invites.
+- **TG Bot Integration:**
+  - Endpoint POST /api/telegram/link: Verify app password, link telegram_id to user.
+
+### Step 4: Frontend Implementation (Expand App.tsx and components)
+- **Routing:** Add routes: /journal, /schedule-editor, /org-management, /notifications.
+- **Auth Pages:** Login/Register/Verification as provided. Add ForgotPassword.
+- **Dashboard.tsx:** Expand calendar to show personal events + journal lessons. Add tabs for personal/journal views. Integrate marks/homework in event modals.
+- **Profile.tsx:** Add org creation/join, role management, TG link button (prompt user_id from bot).
+- **Schedule.tsx:** Viewer for weekly/daily schedule. Editor for admins/teachers: upload file, manual add lessons.
+- **Journal Component (New):** Table view for group/day: lessons, marks input, attendance checkboxes, homework editor. Student view: read-only grades.
+- **EventView.tsx:** Public/private shared events viewer.
+- **Kipswift.tsx:** As provided, add group chats for classes.
+- **Notifications Page (New):** List, mark read, settings for TG/email.
+- **UI Enhancements:** Role-based menus, real-time updates via SocketIO, drag-drop for schedules.
+
+### Step 5: Telegram Bot Implementation
+- Script: bot.py using python-telegram-bot.
+- Commands:
+  - /start: Greet, ask to link via app (provide user_id).
+  - /link <app_password>: Verify with backend API, link telegram_id.
+  - /unlink: Remove link.
+  - /notifications: Toggle on/off.
+- Polling: Every 1min, query backend /api/notifications/pending?user_id=<id>, send messages via bot.send_message.
+- Notifications format: "New grade: 5 in Math. Comment: Good work!" or "Homework due: Read chapter 3."
+- Run as separate process.
+
+### Step 6: Integration & Features
+- **Journal-Calendar Integration:** Lessons appear as events. Updates sync bidirectionally.
+- **Schedule Loading:** Parse uploaded files, auto-populate lessons/actual_lessons.
+- **Roles & Permissions:** Admins create orgs/groups, teachers edit journal/schedule, students view.
+- **Personal Calendar:** Non-journal events/tasks for users.
+- **Testing:** Unit tests for backend, e2e for frontend.
+- **Deployment:** Docker for backend/frontend, NGINX proxy, Heroku/VPS.
+
+Implement all this step-by-step, ensuring the final product is a complete platform as described.на р
