@@ -1991,6 +1991,146 @@ def get_student_attendance(student_id):
     return jsonify([dict(row) for row in cur.fetchall()])
 
 
+def delete_event_from_actual_lesson(actual_lesson_id):
+    """
+    Удаление события календаря при удалении занятия
+    """
+    db = get_db()
+    cur = db.cursor()
+    
+    try:
+        # Получаем информацию о занятии
+        cur.execute(
+            """SELECT al.date, l.start_time, u.id as teacher_id
+               FROM actual_lessons al
+               JOIN lessons l ON al.lesson_id = l.id
+               JOIN users u ON l.teacher_id = u.id
+               WHERE al.id = ?""",
+            (actual_lesson_id,)
+        )
+        lesson_info = cur.fetchone()
+        
+        if lesson_info:
+            # Находим и удаляем связанное событие
+            cur.execute(
+                """DELETE FROM events 
+                   WHERE owner_id = ? 
+                   AND date = ? 
+                   AND time = ?
+                   AND event_type = 'lesson'""",
+                (lesson_info['teacher_id'], lesson_info['date'], lesson_info['start_time'])
+            )
+            
+            if cur.rowcount > 0:
+                db.commit()
+                return True
+    
+    except Exception as e:
+        print(f"Error deleting calendar event: {e}")
+    
+    return False
+
+
+def sync_all_actual_lessons_to_calendar(group_id, start_date=None, end_date=None):
+    """
+    Массовая синхронизация всех занятий группы с календарём
+    Используется при первоначальной настройке или пересинхронизации
+    """
+    db = get_db()
+    cur = db.cursor()
+    
+    # Получаем все actual_lessons группы
+    query = """SELECT al.id, al.date
+               FROM actual_lessons al
+               JOIN lessons l ON al.lesson_id = l.id
+               WHERE l.group_id = ?"""
+    
+    params = [group_id]
+    
+    if start_date:
+        query += " AND al.date >= ?"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND al.date <= ?"
+        params.append(end_date)
+    
+    cur.execute(query, params)
+    actual_lessons = cur.fetchall()
+    
+    synced_count = 0
+    
+    for lesson in actual_lessons:
+        # Получаем информацию о занятии
+        cur.execute(
+            """SELECT al.date, l.start_time, l.end_time, l.group_id,
+                      s.name as subject_name,
+                      u.id as teacher_id,
+                      g.organization_id
+               FROM actual_lessons al
+               JOIN lessons l ON al.lesson_id = l.id
+               JOIN subjects s ON l.subject_id = s.id
+               JOIN users u ON l.teacher_id = u.id
+               JOIN groups g ON l.group_id = g.id
+               WHERE al.id = ?""",
+            (lesson['id'],)
+        )
+        lesson_info = cur.fetchone()
+        
+        if not lesson_info:
+            continue
+        
+        # Проверяем, есть ли уже событие
+        cur.execute(
+            """SELECT id FROM events
+               WHERE owner_id = ? 
+               AND date = ? 
+               AND time = ?
+               AND event_type = 'lesson'""",
+            (lesson_info['teacher_id'], lesson_info['date'], lesson_info['start_time'])
+        )
+        
+        if not cur.fetchone():
+            # Создаём событие
+            try:
+                teacher_event_id = generate_uuid()
+                
+                title = f"Занятие: {lesson_info['subject_name']}"
+                description = f"Занятие по предмету {lesson_info['subject_name']}"
+                
+                cur.execute(
+                    """INSERT INTO events (id, owner_id, organization_id, title, description, 
+                                          date, time, end_time, event_type, privacy, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'lesson', 'public', ?)""",
+                    (teacher_event_id, lesson_info['teacher_id'], lesson_info['organization_id'],
+                     title, description, lesson_info['date'], lesson_info['start_time'], 
+                     lesson_info['end_time'], int(time.time()))
+                )
+                
+                # Получаем студентов группы
+                cur.execute(
+                    "SELECT user_id FROM user_groups WHERE group_id = ?",
+                    (lesson_info['group_id'],)
+                )
+                students = cur.fetchall()
+                
+                # Делаем событие доступным для студентов
+                for student in students:
+                    share_id = generate_uuid()
+                    cur.execute(
+                        """INSERT INTO shared_events (id, event_id, user_id, accepted, forbid_edit, allow_comments)
+                           VALUES (?, ?, ?, 1, 1, 0)""",
+                        (share_id, teacher_event_id, student['user_id'])
+                    )
+                
+                synced_count += 1
+            
+            except Exception as e:
+                print(f"Error syncing lesson {lesson['id']}: {e}")
+    
+    db.commit()
+    return synced_count
+
 # ============ JOURNAL SUMMARY API ============
 
 
@@ -4344,6 +4484,9 @@ def generate_actual_lessons():
     group_id = data.get("group_id")
     start_date = data.get("start_date")  # YYYY-MM-DD
     end_date = data.get("end_date")
+    create_calendar_events = data.get(
+        "create_calendar_events", True
+    )  # По умолчанию создаём события
 
     if not all([group_id, start_date, end_date]):
         return jsonify({"error": "Missing required fields"}), 400
@@ -4365,12 +4508,16 @@ def generate_actual_lessons():
     cur.execute("SELECT * FROM lessons WHERE group_id = ?", (group_id,))
     lessons = cur.fetchall()
 
+    if not lessons:
+        return jsonify({"error": "No schedule found for this group"}), 404
+
     from datetime import datetime, timedelta
 
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
 
     created_count = 0
+    events_created = 0
     current_date = start
 
     while current_date <= end:
@@ -4379,26 +4526,114 @@ def generate_actual_lessons():
         # Находим уроки для этого дня недели
         for lesson in lessons:
             if lesson["day_of_week"] == day_of_week:
+                date_str = current_date.strftime("%Y-%m-%d")
+
                 # Проверяем, не существует ли уже
                 cur.execute(
                     "SELECT id FROM actual_lessons WHERE lesson_id = ? AND date = ?",
-                    (lesson["id"], current_date.strftime("%Y-%m-%d")),
+                    (lesson["id"], date_str),
                 )
-                if not cur.fetchone():
+                existing = cur.fetchone()
+
+                if not existing:
+                    # Создаём actual_lesson
                     actual_id = generate_uuid()
                     cur.execute(
                         "INSERT INTO actual_lessons (id, lesson_id, date) VALUES (?, ?, ?)",
-                        (actual_id, lesson["id"], current_date.strftime("%Y-%m-%d")),
+                        (actual_id, lesson["id"], date_str),
                     )
                     created_count += 1
+
+                    # Создаём событие календаря если нужно
+                    if create_calendar_events:
+                        try:
+                            # Получаем полную информацию о занятии
+                            cur.execute(
+                                """SELECT l.start_time, l.end_time, l.group_id,
+                                          s.name as subject_name, s.id as subject_id,
+                                          u.id as teacher_id, u.username as teacher_name,
+                                          g.organization_id
+                                   FROM lessons l
+                                   JOIN subjects s ON l.subject_id = s.id
+                                   JOIN users u ON l.teacher_id = u.id
+                                   JOIN groups g ON l.group_id = g.id
+                                   WHERE l.id = ?""",
+                                (lesson["id"],),
+                            )
+                            lesson_info = cur.fetchone()
+
+                            if lesson_info:
+                                # Создаём событие для преподавателя
+                                teacher_event_id = generate_uuid()
+
+                                title = f"Занятие: {lesson_info['subject_name']}"
+                                description = (
+                                    f"Занятие по предмету {lesson_info['subject_name']}"
+                                )
+
+                                cur.execute(
+                                    """INSERT INTO events (id, owner_id, organization_id, title, description, 
+                                                          date, time, end_time, event_type, privacy, created_at)
+                                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'lesson', 'public', ?)""",
+                                    (
+                                        teacher_event_id,
+                                        lesson_info["teacher_id"],
+                                        lesson_info["organization_id"],
+                                        title,
+                                        description,
+                                        date_str,
+                                        lesson_info["start_time"],
+                                        lesson_info["end_time"],
+                                        int(time.time()),
+                                    ),
+                                )
+
+                                # Получаем студентов группы
+                                cur.execute(
+                                    "SELECT user_id FROM user_groups WHERE group_id = ?",
+                                    (lesson_info["group_id"],),
+                                )
+                                students = cur.fetchall()
+
+                                # Делаем событие доступным для студентов
+                                for student in students:
+                                    share_id = generate_uuid()
+                                    cur.execute(
+                                        """INSERT INTO shared_events (id, event_id, user_id, accepted, forbid_edit, allow_comments)
+                                           VALUES (?, ?, ?, 1, 1, 0)""",
+                                        (
+                                            share_id,
+                                            teacher_event_id,
+                                            student["user_id"],
+                                        ),
+                                    )
+
+                                events_created += 1
+
+                        except Exception as e:
+                            # Логируем ошибку, но продолжаем
+                            print(f"Error creating calendar event: {e}")
 
         current_date += timedelta(days=1)
 
     db.commit()
-    log_audit(user_id, "ACTUAL_LESSONS_GENERATED", group_id)
+    log_audit(
+        user_id,
+        "ACTUAL_LESSONS_GENERATED",
+        group_id,
+        details={"created": created_count, "events_created": events_created},
+    )
+
+    response_message = f"Generated {created_count} actual lessons"
+    if create_calendar_events:
+        response_message += f" and {events_created} calendar events"
 
     return jsonify(
-        {"message": f"Generated {created_count} actual lessons", "count": created_count}
+        {
+            "message": response_message,
+            "lessons_count": created_count,
+            "events_count": events_created if create_calendar_events else 0,
+        }
     )
 
 
@@ -4493,6 +4728,14 @@ def manage_actual_lesson(actual_lesson_id):
     else:  # PUT - обновить тему, ДЗ, заметки
         data = request.json
 
+        # Получаем старые данные для сравнения
+        cur.execute("SELECT * FROM actual_lessons WHERE id = ?", (actual_lesson_id,))
+        old_lesson = cur.fetchone()
+
+        if not old_lesson:
+            return jsonify({"error": "Lesson not found"}), 404
+
+        # Обновляем actual_lesson
         cur.execute(
             """UPDATE actual_lessons
                SET topic = ?, homework = ?, notes = ?
@@ -4508,21 +4751,94 @@ def manage_actual_lesson(actual_lesson_id):
 
         log_audit(user_id, "ACTUAL_LESSON_UPDATED", actual_lesson_id)
 
-        # Если добавлено домашнее задание - уведомить студентов
-        if data.get("homework"):
+        # Обновляем связанное событие календаря
+        try:
             cur.execute(
-                """SELECT ug.user_id
+                """SELECT al.date, l.start_time, l.end_time, l.group_id,
+                          s.name as subject_name, u.id as teacher_id,
+                          g.organization_id
                    FROM actual_lessons al
                    JOIN lessons l ON al.lesson_id = l.id
+                   JOIN subjects s ON l.subject_id = s.id
+                   JOIN users u ON l.teacher_id = u.id
+                   JOIN groups g ON l.group_id = g.id
+                   WHERE al.id = ?""",
+                (actual_lesson_id,),
+            )
+            lesson_info = cur.fetchone()
+
+            if lesson_info:
+                # Ищем связанное событие
+                cur.execute(
+                    """SELECT id FROM events 
+                       WHERE owner_id = ? 
+                       AND date = ? 
+                       AND time = ?
+                       AND event_type = 'lesson'
+                       LIMIT 1""",
+                    (
+                        lesson_info["teacher_id"],
+                        lesson_info["date"],
+                        lesson_info["start_time"],
+                    ),
+                )
+                event = cur.fetchone()
+
+                if event:
+                    # Обновляем событие
+                    title = f"Занятие: {lesson_info['subject_name']}"
+                    description = data.get(
+                        "topic", f"Занятие по предмету {lesson_info['subject_name']}"
+                    )
+
+                    if data.get("homework"):
+                        description += (
+                            f"\n\n📝 Домашнее задание: {data.get('homework')}"
+                        )
+
+                    cur.execute(
+                        """UPDATE events 
+                           SET title = ?, description = ?, version = version + 1
+                           WHERE id = ?""",
+                        (title, description, event["id"]),
+                    )
+                    db.commit()
+
+                    # Уведомляем студентов через SocketIO
+                    cur.execute(
+                        "SELECT user_id FROM user_groups WHERE group_id = ?",
+                        (lesson_info["group_id"],),
+                    )
+                    for student in cur.fetchall():
+                        socketio.emit(
+                            "event_update",
+                            {"event_id": event["id"]},
+                            room=str(student["user_id"]),
+                        )
+
+        except Exception as e:
+            print(f"Error updating calendar event: {e}")
+
+        # Если добавлено домашнее задание - уведомить студентов
+        if data.get("homework") and data.get("homework") != old_lesson.get("homework"):
+            cur.execute(
+                """SELECT ug.user_id, s.name as subject_name
+                   FROM actual_lessons al
+                   JOIN lessons l ON al.lesson_id = l.id
+                   JOIN subjects s ON l.subject_id = s.id
                    JOIN user_groups ug ON l.group_id = ug.group_id
                    WHERE al.id = ?""",
                 (actual_lesson_id,),
             )
+
+            homework_preview = data.get("homework")[:100]
+
             for student in cur.fetchall():
+                subject_name = student.get("subject_name", "предмету")
                 create_notification(
                     student["user_id"],
                     "homework",
-                    f"Новое домашнее задание: {data.get('homework')[:100]}",
+                    f"Новое домашнее задание по {subject_name}: {homework_preview}",
                 )
 
         return jsonify({"message": "Lesson updated"})
