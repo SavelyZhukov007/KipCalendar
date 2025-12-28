@@ -745,13 +745,17 @@ def logout():
 
 @app.route("/role", methods=["GET"])
 def get_role():
-    username = get_auth_user()
-    if not username:
+    user_id = get_auth_user()  # Теперь возвращает user_id напрямую
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
     db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT roles, current_role FROM users WHERE username = ?", (username,))
+    cur.execute("SELECT roles, current_role FROM users WHERE id = ?", (user_id,))
     user = cur.fetchone()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
     return jsonify(
         {"roles": json.loads(user["roles"]), "currentRole": user["current_role"]}
     )
@@ -759,21 +763,34 @@ def get_role():
 
 @app.route("/switch-role", methods=["POST"])
 def switch_role():
-    username = get_auth_user()
-    if not username:
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
     data = request.json
     new_role = data.get("newRole")
+
     db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT roles FROM users WHERE username = ?", (username,))
-    roles = json.loads(cur.fetchone()["roles"])
+    cur.execute("SELECT roles FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    roles = json.loads(user["roles"])
     if new_role not in roles:
         return jsonify({"error": "Invalid role"}), 400
-    cur.execute(
-        "UPDATE users SET current_role = ? WHERE username = ?", (new_role, username)
-    )
+
+    cur.execute("UPDATE users SET current_role = ? WHERE id = ?", (new_role, user_id))
     db.commit()
+
+    log_audit(
+        user_id,
+        "ROLE_SWITCHED",
+        details={"old_role": user["current_role"], "new_role": new_role},
+    )
+
     return jsonify({"message": "Role switched"})
 
 
@@ -781,14 +798,19 @@ def switch_role():
 def get_events():
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
-    user_id = get_user_id(username)
+
     db = get_db()
     cur = db.cursor()
+
+    # Собственные события
     cur.execute("SELECT * FROM events WHERE owner_id = ?", (user_id,))
     own_events = cur.fetchall()
+
+    # Shared события
     cur.execute(
         """
     SELECT e.* FROM events e
@@ -798,7 +820,9 @@ def get_events():
         (user_id,),
     )
     shared_events = cur.fetchall()
+
     all_events = [dict(row) for row in own_events + shared_events]
+
     for ev in all_events:
         ev["recurring_options"] = (
             json.loads(ev["recurring_options"]) if ev["recurring_options"] else None
@@ -807,6 +831,7 @@ def get_events():
         ev["type"] = ev["privacy"]
         ev["name"] = str(ev["id"])
         ev["eventType"] = ev["event_type"]
+
     return jsonify(all_events)
 
 
@@ -814,13 +839,23 @@ def get_events():
 def create_plan():
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
     data = request.json
-    user_id = get_user_id(username)
     db = get_db()
     cur = db.cursor()
+
+    # Получаем username для URL
+    cur.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    username = user["username"]
+
     recurring = (
         json.dumps(data.get("recurringOptions"))
         if data.get("recurringOptions")
@@ -831,12 +866,18 @@ def create_plan():
         if data.get("privacy") == "private" and data.get("password")
         else None
     )
+
+    event_id = generate_uuid()
+
     cur.execute(
         """
-    INSERT INTO events (owner_id, title, date, time, description, event_type, content, end_date, end_time, recurring_options, privacy, password_hash, expiration_days)
-    VALUES (?, ?, ?, ?, ?, 'plan', ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO events (id, owner_id, title, date, time, description, event_type, content, 
+                       end_date, end_time, recurring_options, privacy, password_hash, 
+                       expiration_days, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'plan', ?, ?, ?, ?, ?, ?, ?, ?)
     """,
         (
+            event_id,
             user_id,
             data["title"],
             data["date"],
@@ -849,30 +890,42 @@ def create_plan():
             data["privacy"],
             password_hash,
             data.get("expirationDays"),
+            int(time.time()),
         ),
     )
     db.commit()
-    event_id = cur.lastrowid
+
+    log_audit(user_id, "EVENT_CREATED", event_id)
+
     url = f"http://localhost:3000/event/{username}/{data['privacy']}/{event_id}"
-    return jsonify({"url": url})
+    return jsonify({"url": url, "event_id": event_id})
 
 
 @app.route("/api/events/create-task", methods=["POST", "OPTIONS"])
 def create_task():
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()  # Получаем напрямую user_id
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
     data = request.json
-    user_id = get_user_id(username)
     db = get_db()
     cur = db.cursor()
+
+    # Получаем username для URL
+    cur.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    username = user["username"]
+
     raw_subtasks = data.get("subTasks")
     if raw_subtasks:
         subtasks = json.dumps(raw_subtasks)
     else:
-        # если подзадачи не переданы, создаём одну "главную" подзадачу по названию задачи
         main_subtask = [
             {
                 "name": data["title"],
@@ -883,18 +936,25 @@ def create_task():
             }
         ]
         subtasks = json.dumps(main_subtask)
+
     password_hash = (
         hash_password(data["password"])
         if data.get("privacy") == "private" and data.get("password")
         else None
     )
+
+    # Генерируем UUID для события
+    event_id = generate_uuid()
+
     cur.execute(
         """
-    INSERT INTO events (owner_id, title, date, time, description, event_type, subtasks, privacy, password_hash, expiration_days)
-    VALUES (?, ?, ?, ?, ?, 'task', ?, ?, ?, ?)
+    INSERT INTO events (id, owner_id, title, date, time, description, event_type, 
+                       subtasks, privacy, password_hash, expiration_days, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'task', ?, ?, ?, ?, ?)
     """,
         (
-            user_id,
+            event_id,
+            user_id,  # Теперь это TEXT UUID
             data["title"],
             datetime.datetime.now().strftime("%Y-%m-%d"),
             datetime.datetime.now().strftime("%H:%M"),
@@ -903,38 +963,56 @@ def create_task():
             data["privacy"],
             password_hash,
             data.get("expirationDays"),
+            int(time.time()),
         ),
     )
     db.commit()
-    event_id = cur.lastrowid
+
+    log_audit(user_id, "EVENT_CREATED", event_id)
+
     url = f"http://localhost:3000/event/{username}/{data['privacy']}/{event_id}"
-    return jsonify({"url": url})
+    return jsonify({"url": url, "event_id": event_id})
 
 
 @app.route("/event/<username>/<privacy>/<name>", methods=["GET", "OPTIONS"])
 def view_event(username, privacy, name):
     if request.method == "OPTIONS":
         return "", 200
-    event_id = int(name)
+
+    event_id = name  # Теперь это UUID string
     db = get_db()
     cur = db.cursor()
     cur.execute("SELECT * FROM events WHERE id = ?", (event_id,))
     event = cur.fetchone()
+
     if not event:
         return jsonify({"error": "Not found"}), 404
-    owner_id = get_user_id(username)
+
+    # Получаем ID владельца по username
+    cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+    owner = cur.fetchone()
+    if not owner:
+        return jsonify({"error": "Owner not found"}), 404
+
+    owner_id = owner["id"]
+
     if event["owner_id"] != owner_id:
-        auth_user = get_auth_user()
-        auth_id = get_user_id(auth_user) if auth_user else None
-        cur.execute(
-            "SELECT * FROM shared_events WHERE event_id = ? AND user_id = ? AND accepted = 1",
-            (event_id, auth_id),
-        )
-        if not cur.fetchone() and event["privacy"] == "private":
+        auth_user_id = get_auth_user()
+        if auth_user_id:
+            cur.execute(
+                "SELECT * FROM shared_events WHERE event_id = ? AND user_id = ? AND accepted = 1",
+                (event_id, auth_user_id),
+            )
+            if not cur.fetchone() and event["privacy"] == "private":
+                return jsonify({"error": "Unauthorized"}), 401
+        elif event["privacy"] == "private":
             return jsonify({"error": "Unauthorized"}), 401
+
     if event["privacy"] == "private":
         pass_param = request.args.get("password")
-        if not pass_param or hash_password(pass_param) != event["password_hash"]:
+        if event["password_hash"] and (
+            not pass_param or hash_password(pass_param) != event["password_hash"]
+        ):
             return jsonify({"error": "Wrong password"}), 403
         if event["expiration_days"]:
             create_time = datetime.datetime.strptime(
@@ -944,6 +1022,7 @@ def view_event(username, privacy, name):
                 days=event["expiration_days"]
             ):
                 return jsonify({"error": "Expired"}), 403
+
     ev_dict = dict(event)
     ev_dict["recurring_options"] = (
         json.loads(ev_dict["recurring_options"])
@@ -956,21 +1035,19 @@ def view_event(username, privacy, name):
     ev_dict["eventType"] = ev_dict["event_type"]
     ev_dict["type"] = privacy
     ev_dict["name"] = name
-    ev_dict["id"] = event_id
-    ev_dict["shared"] = (
-        True
-        if cur.execute(
-            "SELECT COUNT(*) FROM shared_events WHERE event_id = ?", (event_id,)
-        ).fetchone()[0]
-        > 0
-        else False
+
+    cur.execute(
+        "SELECT COUNT(*) as count FROM shared_events WHERE event_id = ?", (event_id,)
     )
+    ev_dict["shared"] = cur.fetchone()["count"] > 0
+
     cur.execute(
         "SELECT allow_comments FROM shared_events WHERE event_id = ? LIMIT 1",
         (event_id,),
     )
     share = cur.fetchone()
     ev_dict["allowComments"] = share["allow_comments"] if share else False
+
     return jsonify(ev_dict)
 
 
@@ -978,17 +1055,20 @@ def view_event(username, privacy, name):
 def modify_event(privacy, name):
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
-    event_id = int(name)
+
+    event_id = name
     db = get_db()
     cur = db.cursor()
     cur.execute("SELECT * FROM events WHERE id = ?", (event_id,))
     event = cur.fetchone()
+
     if not event:
         return jsonify({"error": "Not found"}), 404
-    user_id = get_user_id(username)
+
     can_edit = event["owner_id"] == user_id
     if not can_edit:
         cur.execute(
@@ -998,11 +1078,14 @@ def modify_event(privacy, name):
         share = cur.fetchone()
         if share and not share["forbid_edit"]:
             can_edit = True
+
     if not can_edit:
         return jsonify({"error": "No permission"}), 403
+
     if request.method == "DELETE":
         cur.execute("DELETE FROM events WHERE id = ?", (event_id,))
         db.commit()
+        log_audit(user_id, "EVENT_DELETED", event_id)
         return jsonify({"message": "Deleted"})
     else:
         data = request.json
@@ -1013,6 +1096,7 @@ def modify_event(privacy, name):
             update_fields += ["content", "end_date", "end_time", "recurring_options"]
         elif event["event_type"] == "task":
             update_fields += ["subtasks"]
+
         updated_event = dict(event)
         for field in update_fields:
             if field in data:
@@ -1025,30 +1109,39 @@ def modify_event(privacy, name):
                 if old_val != new_val:
                     updates.append((field, old_val, new_val))
                     updated_event[field] = new_val
+
         if "password" in data and data["password"]:
             updated_event["password_hash"] = hash_password(data["password"])
-        set_clause = (
-            ", ".join([f"{field} = ?" for field in update_fields if field in data])
-            + ", password_hash = ?, version = version + 1"
+
+        set_clause = ", ".join(
+            [f"{field} = ?" for field in update_fields if field in data]
         )
-        params = [updated_event[field] for field in update_fields if field in data] + [
-            updated_event["password_hash"],
-            event_id,
-            old_version,
-        ]
+        if "password" in data:
+            set_clause += ", password_hash = ?"
+        set_clause += ", version = version + 1"
+
+        params = [updated_event[field] for field in update_fields if field in data]
+        if "password" in data:
+            params.append(updated_event["password_hash"])
+        params.extend([event_id, old_version])
+
         cur.execute(
             f"UPDATE events SET {set_clause} WHERE id = ? AND version = ?", params
         )
         if cur.rowcount == 0:
             return jsonify({"error": "Conflict"}), 409
         db.commit()
+
         timestamp = int(time.time())
         for field, old, new in updates:
+            history_id = generate_uuid()
             cur.execute(
-                "INSERT INTO event_history (event_id, user_id, field, old_value, new_value, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-                (event_id, user_id, field, old, new, timestamp),
+                "INSERT INTO event_history (id, event_id, user_id, field, old_value, new_value, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (history_id, event_id, user_id, field, old, new, timestamp),
             )
         db.commit()
+
+        # Notify через SocketIO
         cur.execute(
             "SELECT user_id FROM shared_events WHERE event_id = ? AND accepted = 1",
             (event_id,),
@@ -1061,34 +1154,48 @@ def modify_event(privacy, name):
             socketio.emit(
                 "event_update", {"event_id": event_id}, room=str(event["owner_id"])
             )
+
+        log_audit(user_id, "EVENT_UPDATED", event_id)
+
         return jsonify({"message": "Updated"})
 
 
-@app.route("/api/events/<int:event_id>/share", methods=["POST", "OPTIONS"])
+@app.route("/api/events/<event_id>/share", methods=["POST", "OPTIONS"])
 def share_event(event_id):
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
     data = request.json
     users = data["users"]  # list of usernames
     forbid_edit = data.get("forbid_edit", False)
     allow_comments = data.get("allow_comments", False)
+
     db = get_db()
     cur = db.cursor()
-    for u in users:
-        u_id = get_user_id(u)
-        if u_id:
+
+    for username in users:
+        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+        user = cur.fetchone()
+        if user:
+            share_id = generate_uuid()
             cur.execute(
-                "INSERT INTO shared_events (event_id, user_id, accepted, forbid_edit, allow_comments) VALUES (?, ?, NULL, ?, ?)",
-                (event_id, u_id, forbid_edit, allow_comments),
+                "INSERT INTO shared_events (id, event_id, user_id, accepted, forbid_edit, allow_comments) VALUES (?, ?, ?, NULL, ?, ?)",
+                (share_id, event_id, user["id"], forbid_edit, allow_comments),
             )
     db.commit()
-    for u in users:
-        u_id = get_user_id(u)
-        if u_id:
-            socketio.emit("new_share", {"event_id": event_id}, room=str(u_id))
+
+    for username in users:
+        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+        user = cur.fetchone()
+        if user:
+            socketio.emit("new_share", {"event_id": event_id}, room=str(user["id"]))
+
+    log_audit(user_id, "EVENT_SHARED", event_id)
+
     return jsonify({"message": "Shared"})
 
 
@@ -1096,10 +1203,11 @@ def share_event(event_id):
 def pending_shares():
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
-    user_id = get_user_id(username)
+
     db = get_db()
     cur = db.cursor()
     cur.execute(
@@ -1115,49 +1223,63 @@ def pending_shares():
     return jsonify([dict(row) for row in cur.fetchall()])
 
 
-@app.route("/api/shares/accept/<int:id>", methods=["POST", "OPTIONS"])
-def accept_share(id):
+@app.route("/api/shares/accept/<share_id>", methods=["POST", "OPTIONS"])
+def accept_share(share_id):
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
-    user_id = get_user_id(username)
+
     db = get_db()
     cur = db.cursor()
     cur.execute(
         "UPDATE shared_events SET accepted = 1 WHERE id = ? AND user_id = ?",
-        (id, user_id),
+        (share_id, user_id),
     )
     db.commit()
+
+    log_audit(user_id, "SHARE_ACCEPTED", share_id)
+
     return jsonify({"message": "Accepted"})
 
 
-@app.route("/api/shares/decline/<int:id>", methods=["POST", "OPTIONS"])
-def decline_share(id):
+@app.route("/api/shares/decline/<share_id>", methods=["POST", "OPTIONS"])
+def decline_share(share_id):
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
     data = request.json
     reason = data.get("reason")
-    user_id = get_user_id(username)
+
     db = get_db()
     cur = db.cursor()
     cur.execute(
         "UPDATE shared_events SET accepted = 0, reason = ? WHERE id = ? AND user_id = ?",
-        (reason, id, user_id),
+        (reason, share_id, user_id),
     )
     db.commit()
+
     cur.execute(
-        "SELECT owner_id FROM events WHERE id = (SELECT event_id FROM shared_events WHERE id = ?)",
-        (id,),
+        "SELECT e.owner_id FROM events e JOIN shared_events s ON e.id = s.event_id WHERE s.id = ?",
+        (share_id,),
     )
-    sender_id = cur.fetchone()["owner_id"]
-    socketio.emit(
-        "share_declined", {"share_id": id, "reason": reason}, room=str(sender_id)
-    )
+    row = cur.fetchone()
+    if row:
+        sender_id = row["owner_id"]
+        socketio.emit(
+            "share_declined",
+            {"share_id": share_id, "reason": reason},
+            room=str(sender_id),
+        )
+
+    log_audit(user_id, "SHARE_DECLINED", share_id)
+
     return jsonify({"message": "Declined"})
 
 
@@ -1175,16 +1297,18 @@ def get_users_by_role():
     return jsonify([dict(row) for row in cur.fetchall()])
 
 
-@app.route("/api/events/<int:event_id>/comments", methods=["GET", "POST", "OPTIONS"])
+@app.route("/api/events/<event_id>/comments", methods=["GET", "POST", "OPTIONS"])
 def event_comments(event_id):
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
-    user_id = get_user_id(username)
+
     db = get_db()
     cur = db.cursor()
+
     if request.method == "GET":
         cur.execute(
             "SELECT c.*, u.username FROM comments c JOIN users u ON c.user_id = u.id WHERE event_id = ? ORDER BY timestamp",
@@ -1195,14 +1319,22 @@ def event_comments(event_id):
         data = request.json
         content = data["content"]
         timestamp = int(time.time())
+        comment_id = generate_uuid()
+
         cur.execute(
-            "INSERT INTO comments (event_id, user_id, content, timestamp) VALUES (?, ?, ?, ?)",
-            (event_id, user_id, content, timestamp),
+            "INSERT INTO comments (id, event_id, user_id, content, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (comment_id, event_id, user_id, content, timestamp),
         )
         db.commit()
+
+        cur.execute("SELECT username FROM users WHERE id = ?", (user_id,))
+        username = cur.fetchone()["username"]
+
+        log_audit(user_id, "COMMENT_ADDED", event_id)
+
         return jsonify(
             {
-                "id": cur.lastrowid,
+                "id": comment_id,
                 "content": content,
                 "user": username,
                 "timestamp": timestamp,
@@ -1210,13 +1342,15 @@ def event_comments(event_id):
         )
 
 
-@app.route("/api/events/<int:event_id>/history", methods=["GET", "OPTIONS"])
+@app.route("/api/events/<event_id>/history", methods=["GET", "OPTIONS"])
 def event_history(event_id):
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
+
     db = get_db()
     cur = db.cursor()
     cur.execute(
@@ -1230,31 +1364,30 @@ def event_history(event_id):
 def add_mark():
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json
     actual_lesson_id = data.get("actual_lesson_id")
     student_id = data.get("student_id")
-    mark1 = data.get("mark1")
-    mark2 = data.get("mark2")
-    absence_type = data.get("absence_type")
+    mark_value = data.get("value")  # Переименовано чтобы избежать конфликта
     comment = data.get("comment")
 
     db = get_db()
     cur = db.cursor()
 
     # Добавляем оценку
+    mark_id = generate_uuid()
     cur.execute(
-        """INSERT INTO marks (actual_lesson_id, student_id, mark1, mark2, absence_type, comment, timestamp) 
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO marks (id, actual_lesson_id, student_id, value, comment, created_at) 
+           VALUES (?, ?, ?, ?, ?, ?)""",
         (
+            mark_id,
             actual_lesson_id,
             student_id,
-            mark1,
-            mark2,
-            absence_type,
+            mark_value,
             comment,
             int(time.time()),
         ),
@@ -1265,19 +1398,28 @@ def add_mark():
     cur.execute("SELECT email, username FROM users WHERE id = ?", (student_id,))
     student = cur.fetchone()
 
-    if student and student["email"]:
-        subject = "Новая оценка в KipCalendar"
-        body = f"Здравствуйте, {student['username']}!\n\nВам выставлена новая оценка:\n"
-        if mark1:
-            body += f"Оценка 1: {mark1}\n"
-        if mark2:
-            body += f"Оценка 2: {mark2}\n"
+    if student:
+        # Создаем уведомление
+        notif_content = f"Новая оценка: {mark_value}"
         if comment:
-            body += f"Комментарий: {comment}\n"
+            notif_content += f". Комментарий: {comment}"
 
-        send_email(student["email"], subject, body)
+        create_notification(student_id, "grade", notif_content)
 
-    return jsonify({"message": "Mark added"})
+        # Отправляем email
+        if student["email"]:
+            subject = "Новая оценка в KipCalendar"
+            body = f"Здравствуйте, {student['username']}!\n\nВам выставлена новая оценка:\n"
+            if mark_value:
+                body += f"Оценка: {mark_value}\n"
+            if comment:
+                body += f"Комментарий: {comment}\n"
+
+            send_email(student["email"], subject, body)
+
+    log_audit(user_id, "MARK_ADDED", mark_id)
+
+    return jsonify({"message": "Mark added", "mark_id": mark_id})
 
 
 # ========== МЕССЕНДЖЕР API ==========
@@ -1632,18 +1774,343 @@ def get_invitation(token):
     return jsonify(dict(invite))
 
 
+# ========== MESSENGER FIXES ==========
+
+
+@app.route("/api/user/search", methods=["GET", "OPTIONS"])
+def search_users():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    email = request.args.get("email")
+    search_user_id = request.args.get("user_id")
+
+    db = get_db()
+    cur = db.cursor()
+
+    if email:
+        cur.execute("SELECT id, username, email FROM users WHERE email = ?", (email,))
+    elif search_user_id:
+        cur.execute(
+            "SELECT id, username, email FROM users WHERE id = ?", (search_user_id,)
+        )
+    else:
+        return jsonify({"error": "Provide email or user_id"}), 400
+
+    user = cur.fetchone()
+    if user:
+        return jsonify(dict(user))
+    return jsonify({"error": "User not found"}), 404
+
+
+@app.route("/api/chats/create", methods=["POST", "OPTIONS"])
+def create_chat():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    target_user_id = data.get("user_id")
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем существующий чат
+    cur.execute(
+        """
+        SELECT c.id FROM chats c
+        JOIN chat_members cm1 ON c.id = cm1.chat_id
+        JOIN chat_members cm2 ON c.id = cm2.chat_id
+        WHERE c.type = 'direct' 
+        AND cm1.user_id = ? AND cm2.user_id = ?
+    """,
+        (user_id, target_user_id),
+    )
+
+    existing = cur.fetchone()
+    if existing:
+        return jsonify({"chat_id": existing["id"]})
+
+    # Создаем новый чат
+    chat_id = generate_uuid()
+    cur.execute(
+        "INSERT INTO chats (id, type, created_at) VALUES (?, 'direct', ?)",
+        (chat_id, int(time.time())),
+    )
+
+    cur.execute(
+        "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
+        (chat_id, user_id, int(time.time())),
+    )
+    cur.execute(
+        "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
+        (chat_id, target_user_id, int(time.time())),
+    )
+
+    db.commit()
+    return jsonify({"chat_id": chat_id})
+
+
+@app.route("/api/chats", methods=["GET", "OPTIONS"])
+def get_chats():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        """
+        SELECT c.id, c.type, c.name, c.created_at,
+               (SELECT u.username FROM users u 
+                JOIN chat_members cm ON u.id = cm.user_id 
+                WHERE cm.chat_id = c.id AND cm.user_id != ? LIMIT 1) as other_user,
+               (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id) as message_count
+        FROM chats c
+        JOIN chat_members cm ON c.id = cm.chat_id
+        WHERE cm.user_id = ?
+        ORDER BY c.created_at DESC
+    """,
+        (user_id, user_id),
+    )
+
+    chats = [dict(row) for row in cur.fetchall()]
+    return jsonify(chats)
+
+
+@app.route("/api/chats/<chat_id>/messages", methods=["GET", "POST", "OPTIONS"])
+def chat_messages(chat_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем доступ
+    cur.execute(
+        "SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?",
+        (chat_id, user_id),
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Access denied"}), 403
+
+    if request.method == "GET":
+        cur.execute(
+            """
+            SELECT m.*, u.username as sender_name,
+                   (SELECT COUNT(*) FROM message_attachments WHERE message_id = m.id) as attachment_count
+            FROM messages m
+            JOIN users u ON m.sender_id = u.id
+            WHERE m.chat_id = ?
+            ORDER BY m.sent_at ASC
+        """,
+            (chat_id,),
+        )
+        messages = [dict(row) for row in cur.fetchall()]
+        return jsonify(messages)
+
+    else:  # POST
+        data = request.json
+        content = data.get("content", "")
+        subject = data.get("subject")
+        reply_to = data.get("reply_to")
+
+        if not content.strip():
+            return jsonify({"error": "Content required"}), 400
+
+        message_id = generate_uuid()
+        cur.execute(
+            """
+            INSERT INTO messages (id, chat_id, sender_id, subject, content, sent_at, reply_to)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                message_id,
+                chat_id,
+                user_id,
+                subject,
+                content,
+                int(time.time()),
+                reply_to,
+            ),
+        )
+        db.commit()
+
+        # Emit через SocketIO
+        cur.execute(
+            "SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?",
+            (chat_id, user_id),
+        )
+        for member in cur.fetchall():
+            socketio.emit(
+                "new_message",
+                {"chat_id": chat_id, "message_id": message_id, "content": content},
+                room=str(member["user_id"]),
+            )
+
+        return jsonify({"message_id": message_id, "sent_at": int(time.time())})
+
+
+# ========== ORGANIZATIONS FIXES ==========
+
+
+@app.route("/api/organizations/create", methods=["POST", "OPTIONS"])
+def create_organization():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    name = data.get("name")
+    short_name = data.get("short_name")
+    org_type = data.get("type", "education")
+
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    org_id = generate_uuid()
+    cur.execute(
+        """
+        INSERT INTO organizations (id, name, short_name, type, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """,
+        (org_id, name, short_name, org_type, int(time.time()), user_id),
+    )
+
+    # Создатель становится администратором
+    member_id = generate_uuid()
+    cur.execute(
+        """
+        INSERT INTO organization_members (id, organization_id, user_id, roles, current_role, joined_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """,
+        (member_id, org_id, user_id, json.dumps(["admin"]), "admin", int(time.time())),
+    )
+
+    db.commit()
+
+    log_audit(user_id, "ORGANIZATION_CREATED", org_id)
+
+    return jsonify({"organization_id": org_id})
+
+
+@app.route(
+    "/api/organizations/<org_id>/invitations/create", methods=["POST", "OPTIONS"]
+)
+def create_invitation(org_id):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    role = data.get("role")
+    max_uses = data.get("max_uses", -1)
+
+    if role not in ["admin", "teacher", "student"]:
+        return jsonify({"error": "Invalid role"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем права (только админы)
+    cur.execute(
+        """
+        SELECT roles FROM organization_members 
+        WHERE organization_id = ? AND user_id = ?
+    """,
+        (org_id, user_id),
+    )
+    member = cur.fetchone()
+    if not member or "admin" not in json.loads(member["roles"]):
+        return jsonify({"error": "Permission denied"}), 403
+
+    # Генерируем токен
+    token = secrets.token_urlsafe(32)
+    expires_at = int(time.time()) + (7 * 24 * 60 * 60)  # 7 дней
+
+    invite_id = generate_uuid()
+    cur.execute(
+        """
+        INSERT INTO invitations (id, organization_id, role, token, created_at, expires_at, max_uses)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """,
+        (invite_id, org_id, role, token, int(time.time()), expires_at, max_uses),
+    )
+    db.commit()
+
+    invite_url = f"http://localhost:3000/invite/{token}"
+
+    log_audit(user_id, "INVITATION_CREATED", invite_id)
+
+    return jsonify({"invite_url": invite_url, "token": token})
+
+
+@app.route("/api/invitations/<token>", methods=["GET", "OPTIONS"])
+def get_invitation(token):
+    if request.method == "OPTIONS":
+        return "", 200
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        """
+        SELECT i.*, o.name as org_name, o.short_name as org_short_name
+        FROM invitations i
+        JOIN organizations o ON i.organization_id = o.id
+        WHERE i.token = ?
+    """,
+        (token,),
+    )
+    invite = cur.fetchone()
+
+    if not invite:
+        return jsonify({"error": "Invalid invitation"}), 404
+
+    if invite["expires_at"] < int(time.time()):
+        return jsonify({"error": "Invitation expired"}), 410
+
+    if invite["max_uses"] != -1 and invite["uses"] >= invite["max_uses"]:
+        return jsonify({"error": "Invitation limit reached"}), 410
+
+    return jsonify(dict(invite))
+
+
 @app.route("/api/invitations/<token>/accept", methods=["POST", "OPTIONS"])
 def accept_invitation(token):
     if request.method == "OPTIONS":
         return "", 200
-    username = get_auth_user()
-    if not username:
+
+    user_id = get_auth_user()
+    if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json
     profile_data = data.get("profile_data", {})
 
-    my_id = get_user_id(username)
     db = get_db()
     cur = db.cursor()
 
@@ -1669,13 +2136,13 @@ def accept_invitation(token):
         SELECT roles FROM organization_members 
         WHERE organization_id = ? AND user_id = ?
     """,
-        (org_id, my_id),
+        (org_id, user_id),
     )
     existing = cur.fetchone()
 
     if existing:
         # Добавляем роль к существующим
-        roles = json.loads(existing[0])
+        roles = json.loads(existing["roles"])
         if role not in roles:
             roles.append(role)
             cur.execute(
@@ -1684,19 +2151,21 @@ def accept_invitation(token):
                 SET roles = ?, profile_data = ?
                 WHERE organization_id = ? AND user_id = ?
             """,
-                (json.dumps(roles), json.dumps(profile_data), org_id, my_id),
+                (json.dumps(roles), json.dumps(profile_data), org_id, user_id),
             )
     else:
         # Создаем новое членство
+        member_id = generate_uuid()
         cur.execute(
             """
             INSERT INTO organization_members 
-            (organization_id, user_id, roles, current_role, joined_at, profile_data)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (id, organization_id, user_id, roles, current_role, joined_at, profile_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
             (
+                member_id,
                 org_id,
-                my_id,
+                user_id,
                 json.dumps([role]),
                 role,
                 int(time.time()),
@@ -1708,7 +2177,9 @@ def accept_invitation(token):
     cur.execute("UPDATE invitations SET uses = uses + 1 WHERE id = ?", (invite["id"],))
     db.commit()
 
-    return jsonify({"message": "Joined organization"})
+    log_audit(user_id, "INVITATION_ACCEPTED", invite["id"])
+
+    return jsonify({"message": "Joined organization", "organization_id": org_id})
 
 
 def check_expired_users():
@@ -1739,6 +2210,6 @@ def check_expired_users():
 
 
 check_expired_users()
-#savelyhing test run
+# savelyhing test run
 if __name__ == "__main__":
     socketio.run(app, port=5000, debug=True, host="0.0.0.0")
