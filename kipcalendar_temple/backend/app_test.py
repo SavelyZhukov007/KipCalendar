@@ -521,9 +521,7 @@ def init_db():
         """
         )
         db.commit()
-
-
-init_db()
+    init_db()
 
 
 def hash_password(password):
@@ -631,14 +629,123 @@ def register():
     subject = "KipCalendar - Код подтверждения"
     body = f"Ваш код: {code}\nДействителен 10 минут."
     html_body = f"""
-    <html><body style="font-family: Arial;">
-        <h2 style="color: #6366f1;">Добро пожаловать в KipCalendar!</h2>
-        <p>Ваш код подтверждения:</p>
-        <h1 style="color: #6366f1; letter-spacing: 5px;">{code}</h1>
-        <p>Действителен 10 минут.</p>
-        <p>Ваш User ID: <code>{user_id}</code></p>
-    </body></html>
-    """
+        <!DOCTYPE html>
+        <html lang="ru">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="X-UA-Compatible" content="IE=edge">
+            <title>Подтверждение в KipCalendar</title>
+            <style>
+                /* Основные стили для email */
+                body {{
+                    margin: 0;
+                    padding: 0;
+                    font-family: 'Arial', sans-serif;
+                    background-color: #f4f4f4;
+                    color: #333333;
+                }}
+                .container {{
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background-color: #ffffff;
+                    border-radius: 10px;
+                    overflow: hidden;
+                    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+                }}
+                .header {{
+                    background-color: #6366f1;
+                    padding: 40px 20px;
+                    text-align: center;
+                    color: #ffffff;
+                }}
+                .header h1 {{
+                    font-size: 48px; /* Огромный заголовок */
+                    margin: 0;
+                    letter-spacing: 2px;
+                    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+                }}
+                .content {{
+                    padding: 40px 20px;
+                    text-align: center;
+                }}
+                .code {{
+                    font-size: 72px; /* Огромный код */
+                    color: #6366f1;
+                    letter-spacing: 10px;
+                    margin: 20px 0;
+                    padding: 20px;
+                    background-color: #f0f0ff;
+                    border-radius: 8px;
+                    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+                }}
+                .info {{
+                    font-size: 18px;
+                    margin: 10px 0;
+                    color: #555555;
+                }}
+                .user-id {{
+                    font-size: 16px;
+                    color: #777777;
+                    margin-top: 30px;
+                }}
+                .footer {{
+                    background-color: #f4f4f4;
+                    padding: 20px;
+                    text-align: center;
+                    font-size: 14px;
+                    color: #999999;
+                }}
+                /* Адаптивность для мобильных устройств */
+                @media only screen and (max-width: 600px) {{
+                    .container {{
+                        width: 100%;
+                        border-radius: 0;
+                    }}
+                    .header h1 {{
+                        font-size: 36px;
+                    }}
+                    .code {{
+                        font-size: 48px;
+                        letter-spacing: 5px;
+                    }}
+                    .content {{
+                        padding: 20px;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f4f4f4; padding: 20px 0;">
+                <tr>
+                    <td align="center">
+                        <table class="container" border="0" cellspacing="0" cellpadding="0">
+                            <tr>
+                                <td class="header">
+                                    <h1>Добро пожаловать в KipCalendar!</h1>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="content">
+                                    <p class="info">Ваш код подтверждения:</p>
+                                    <div class="code">{code}</div>
+                                    <p class="info">Действителен 10 минут.</p>
+                                    <p class="user-id">Ваш User ID: <code>{user_id}</code></p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="footer">
+                                    Если вы не запрашивали этот код, просто игнорируйте это письмо.<br>
+                                    © 2025 KipCalendar. Все права защищены.
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
+        """
     send_email(email, subject, body, html_body)
 
     log_audit(user_id, "USER_REGISTERED")
@@ -5349,7 +5456,6 @@ def check_expired_users():
             cur.execute("DELETE FROM users WHERE id = ?", (row["id"],))
         db.commit()
     Timer(86400, check_expired_users).start()
-
 
 # Запускаем проверку просроченных пользователей при старте
 check_expired_users()

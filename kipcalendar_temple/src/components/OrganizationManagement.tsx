@@ -63,11 +63,11 @@ const OrganizationManagement: React.FC = () => {
       <Typography variant="h4" gutterBottom>
         {organization.name}
       </Typography>
-      
+
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">
                 Участников
               </Typography>
@@ -75,7 +75,7 @@ const OrganizationManagement: React.FC = () => {
                 {organization.stats.members}
               </Typography>
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">
                 Групп
               </Typography>
@@ -83,7 +83,7 @@ const OrganizationManagement: React.FC = () => {
                 {organization.stats.groups}
               </Typography>
             </Grid>
-            <Grid item xs={12} md={4}>
+            <Grid size={{ xs: 12, md: 4 }}>
               <Typography variant="subtitle2" color="text.secondary">
                 Предметов
               </Typography>
