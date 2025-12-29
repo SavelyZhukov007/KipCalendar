@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Typography, Button, Box, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Select, MenuItem } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import CreateOrganizationDialog from './components/CreateOrganizationDialog';
 import './Profile.css';
 
 const Profile: React.FC = () => {
@@ -11,6 +12,7 @@ const Profile: React.FC = () => {
     const [openOrgDialog, setOpenOrgDialog] = useState(false);
     const [orgName, setOrgName] = useState('');
     const [orgShortName, setOrgShortName] = useState('');
+    const [createOrgOpen, setCreateOrgOpen] = useState(false);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -116,6 +118,13 @@ const Profile: React.FC = () => {
                     Создать организацию
                 </Button>
                 <Button
+                  variant="contained"
+                  onClick={() => setCreateOrgOpen(true)}
+                  sx={{ mt: 2 }}
+                >
+                  Создать организацию
+                </Button>
+                <Button
                     className="profile-button profile-button-secondary"
                     onClick={() => navigate('/kipswift')}
                 >
@@ -156,6 +165,15 @@ const Profile: React.FC = () => {
                     <Button onClick={handleCreateOrg} variant="contained">Создать</Button>
                 </DialogActions>
             </Dialog>
+            <CreateOrganizationDialog
+              open={createOrgOpen}
+              onClose={() => setCreateOrgOpen(false)}
+              onSuccess={(orgId) => {
+                alert(`Организация создана! ID: ${orgId}`);
+                // Перенаправить на страницу управления организацией
+                // navigate(`/organizations/${orgId}`);
+              }}
+            />
         </div>
     );
 };

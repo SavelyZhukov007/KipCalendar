@@ -483,6 +483,41 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
         CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
         CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+         -- Расширяем organizations
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS address TEXT;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS phone TEXT;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS website TEXT;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS inn TEXT;
+        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS rector_name TEXT;
+        
+        -- Академические годы (для планирования)
+        CREATE TABLE IF NOT EXISTS academic_years (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            is_current BOOLEAN DEFAULT 0,
+            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+        );
+        
+        -- Семестры внутри года
+        CREATE TABLE IF NOT EXISTS semesters (
+            id TEXT PRIMARY KEY,
+            academic_year_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            semester_number INTEGER NOT NULL,
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            FOREIGN KEY(academic_year_id) REFERENCES academic_years(id) ON DELETE CASCADE
+        );
+        
+        -- Индексы для быстрого поиска
+        CREATE INDEX IF NOT EXISTS idx_org_members_org ON organization_members(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_groups_org ON groups(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_subjects_org ON subjects(organization_id);
+        CREATE INDEX IF NOT EXISTS idx_lessons_group ON lessons(group_id);
+        CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);А
         """
         )
         db.commit()
@@ -1997,7 +2032,7 @@ def delete_event_from_actual_lesson(actual_lesson_id):
     """
     db = get_db()
     cur = db.cursor()
-    
+
     try:
         # Получаем информацию о занятии
         cur.execute(
@@ -2006,10 +2041,10 @@ def delete_event_from_actual_lesson(actual_lesson_id):
                JOIN lessons l ON al.lesson_id = l.id
                JOIN users u ON l.teacher_id = u.id
                WHERE al.id = ?""",
-            (actual_lesson_id,)
+            (actual_lesson_id,),
         )
         lesson_info = cur.fetchone()
-        
+
         if lesson_info:
             # Находим и удаляем связанное событие
             cur.execute(
@@ -2018,16 +2053,20 @@ def delete_event_from_actual_lesson(actual_lesson_id):
                    AND date = ? 
                    AND time = ?
                    AND event_type = 'lesson'""",
-                (lesson_info['teacher_id'], lesson_info['date'], lesson_info['start_time'])
+                (
+                    lesson_info["teacher_id"],
+                    lesson_info["date"],
+                    lesson_info["start_time"],
+                ),
             )
-            
+
             if cur.rowcount > 0:
                 db.commit()
                 return True
-    
+
     except Exception as e:
         print(f"Error deleting calendar event: {e}")
-    
+
     return False
 
 
@@ -2038,28 +2077,28 @@ def sync_all_actual_lessons_to_calendar(group_id, start_date=None, end_date=None
     """
     db = get_db()
     cur = db.cursor()
-    
+
     # Получаем все actual_lessons группы
     query = """SELECT al.id, al.date
                FROM actual_lessons al
                JOIN lessons l ON al.lesson_id = l.id
                WHERE l.group_id = ?"""
-    
+
     params = [group_id]
-    
+
     if start_date:
         query += " AND al.date >= ?"
         params.append(start_date)
-    
+
     if end_date:
         query += " AND al.date <= ?"
         params.append(end_date)
-    
+
     cur.execute(query, params)
     actual_lessons = cur.fetchall()
-    
+
     synced_count = 0
-    
+
     for lesson in actual_lessons:
         # Получаем информацию о занятии
         cur.execute(
@@ -2073,13 +2112,13 @@ def sync_all_actual_lessons_to_calendar(group_id, start_date=None, end_date=None
                JOIN users u ON l.teacher_id = u.id
                JOIN groups g ON l.group_id = g.id
                WHERE al.id = ?""",
-            (lesson['id'],)
+            (lesson["id"],),
         )
         lesson_info = cur.fetchone()
-        
+
         if not lesson_info:
             continue
-        
+
         # Проверяем, есть ли уже событие
         cur.execute(
             """SELECT id FROM events
@@ -2087,49 +2126,261 @@ def sync_all_actual_lessons_to_calendar(group_id, start_date=None, end_date=None
                AND date = ? 
                AND time = ?
                AND event_type = 'lesson'""",
-            (lesson_info['teacher_id'], lesson_info['date'], lesson_info['start_time'])
+            (lesson_info["teacher_id"], lesson_info["date"], lesson_info["start_time"]),
         )
-        
+
         if not cur.fetchone():
             # Создаём событие
             try:
                 teacher_event_id = generate_uuid()
-                
+
                 title = f"Занятие: {lesson_info['subject_name']}"
                 description = f"Занятие по предмету {lesson_info['subject_name']}"
-                
+
                 cur.execute(
                     """INSERT INTO events (id, owner_id, organization_id, title, description, 
                                           date, time, end_time, event_type, privacy, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'lesson', 'public', ?)""",
-                    (teacher_event_id, lesson_info['teacher_id'], lesson_info['organization_id'],
-                     title, description, lesson_info['date'], lesson_info['start_time'], 
-                     lesson_info['end_time'], int(time.time()))
+                    (
+                        teacher_event_id,
+                        lesson_info["teacher_id"],
+                        lesson_info["organization_id"],
+                        title,
+                        description,
+                        lesson_info["date"],
+                        lesson_info["start_time"],
+                        lesson_info["end_time"],
+                        int(time.time()),
+                    ),
                 )
-                
+
                 # Получаем студентов группы
                 cur.execute(
                     "SELECT user_id FROM user_groups WHERE group_id = ?",
-                    (lesson_info['group_id'],)
+                    (lesson_info["group_id"],),
                 )
                 students = cur.fetchall()
-                
+
                 # Делаем событие доступным для студентов
                 for student in students:
                     share_id = generate_uuid()
                     cur.execute(
                         """INSERT INTO shared_events (id, event_id, user_id, accepted, forbid_edit, allow_comments)
                            VALUES (?, ?, ?, 1, 1, 0)""",
-                        (share_id, teacher_event_id, student['user_id'])
+                        (share_id, teacher_event_id, student["user_id"]),
                     )
-                
+
                 synced_count += 1
-            
+
             except Exception as e:
                 print(f"Error syncing lesson {lesson['id']}: {e}")
-    
+
     db.commit()
     return synced_count
+
+
+@app.route(
+    "/api/organizations/<org_id>/academic-years", methods=["GET", "POST", "OPTIONS"]
+)
+def manage_academic_years(org_id):
+    """Управление учебными годами"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    if request.method == "GET":
+        cur.execute(
+            """SELECT * FROM academic_years 
+               WHERE organization_id = ? 
+               ORDER BY start_date DESC""",
+            (org_id,),
+        )
+        years = [dict(row) for row in cur.fetchall()]
+
+        # Для каждого года получаем семестры
+        for year in years:
+            cur.execute(
+                """SELECT * FROM semesters 
+                   WHERE academic_year_id = ? 
+                   ORDER BY semester_number""",
+                (year["id"],),
+            )
+            year["semesters"] = [dict(row) for row in cur.fetchall()]
+
+        return jsonify(years)
+
+    else:  # POST
+        if not check_organization_permission(user_id, org_id, "admin"):
+            return jsonify({"error": "Permission denied"}), 403
+
+        data = request.json
+        year_id = generate_uuid()
+
+        # Снимаем флаг is_current с других годов
+        if data.get("is_current"):
+            cur.execute(
+                "UPDATE academic_years SET is_current = 0 WHERE organization_id = ?",
+                (org_id,),
+            )
+
+        cur.execute(
+            """INSERT INTO academic_years 
+               (id, organization_id, name, start_date, end_date, is_current)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                year_id,
+                org_id,
+                data["name"],
+                data["start_date"],
+                data["end_date"],
+                data.get("is_current", False),
+            ),
+        )
+
+        # Создаём семестры если переданы
+        if "semesters" in data:
+            for sem in data["semesters"]:
+                sem_id = generate_uuid()
+                cur.execute(
+                    """INSERT INTO semesters 
+                       (id, academic_year_id, name, semester_number, start_date, end_date)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        sem_id,
+                        year_id,
+                        sem["name"],
+                        sem["semester_number"],
+                        sem["start_date"],
+                        sem["end_date"],
+                    ),
+                )
+
+        db.commit()
+        log_audit(user_id, "ACADEMIC_YEAR_CREATED", year_id)
+
+        return jsonify({"year_id": year_id, "message": "Academic year created"}), 201
+
+
+@app.route(
+    "/api/organizations/<org_id>/groups/bulk-create", methods=["POST", "OPTIONS"]
+)
+def bulk_create_groups(org_id):
+    """Массовое создание групп (для импорта)"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    if not check_organization_permission(user_id, org_id, "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    data = request.json
+    groups_data = data.get("groups", [])
+
+    db = get_db()
+    cur = db.cursor()
+
+    created_groups = []
+
+    for group_data in groups_data:
+        group_id = generate_uuid()
+
+        cur.execute(
+            """INSERT INTO groups 
+               (id, organization_id, name, specialty, course, group_number, 
+                admission_year, type, curator_id, building_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                group_id,
+                org_id,
+                group_data["name"],
+                group_data.get("specialty"),
+                group_data.get("course"),
+                group_data.get("group_number"),
+                group_data.get("admission_year"),
+                group_data.get("type"),
+                group_data.get("curator_id"),
+                group_data.get("building_id"),
+            ),
+        )
+
+        created_groups.append({"id": group_id, "name": group_data["name"]})
+
+    db.commit()
+    log_audit(
+        user_id, "GROUPS_BULK_CREATED", org_id, details={"count": len(created_groups)}
+    )
+
+    return (
+        jsonify(
+            {
+                "message": f"Created {len(created_groups)} groups",
+                "groups": created_groups,
+            }
+        ),
+        201,
+    )
+
+
+@app.route("/api/groups/<group_id>/students/bulk-add", methods=["POST", "OPTIONS"])
+def bulk_add_students_to_group(group_id):
+    """Массовое добавление студентов в группу"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем права
+    cur.execute("SELECT organization_id FROM groups WHERE id = ?", (group_id,))
+    group = cur.fetchone()
+
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+
+    if not check_organization_permission(user_id, group["organization_id"], "admin"):
+        return jsonify({"error": "Permission denied"}), 403
+
+    data = request.json
+    student_ids = data.get("student_ids", [])
+
+    added_count = 0
+    errors = []
+
+    for student_id in student_ids:
+        try:
+            cur.execute(
+                "INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)",
+                (student_id, group_id),
+            )
+            added_count += 1
+        except sqlite3.IntegrityError:
+            errors.append(f"Student {student_id} already in group")
+
+    db.commit()
+    log_audit(user_id, "STUDENTS_BULK_ADDED", group_id, details={"count": added_count})
+
+    return jsonify(
+        {
+            "message": f"Added {added_count} students",
+            "added_count": added_count,
+            "errors": errors if errors else None,
+        }
+    )
+
+
 
 # ============ JOURNAL SUMMARY API ============
 
@@ -4911,6 +5162,165 @@ def verify_telegram_user():
             "last_name": user["last_name"],
         }
     )
+
+
+# Добавьте в app_test.py после существующих endpoints
+
+
+@app.route("/api/organizations/create", methods=["POST", "OPTIONS"])
+def create_organization_enhanced():
+    """Расширенное создание организации"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    name = data.get("name")
+    short_name = data.get("short_name")
+    org_type = data.get("type", "education")
+
+    # Дополнительные поля для образовательной организации
+    address = data.get("address")
+    phone = data.get("phone")
+    website = data.get("website")
+    inn = data.get("inn")  # ИНН для РФ
+    rector_name = data.get("rector_name")  # Директор/Ректор
+
+    if not name:
+        return jsonify({"error": "Name required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    org_id = generate_uuid()
+
+    # Расширенная таблица organizations - см. миграцию ниже
+    cur.execute(
+        """INSERT INTO organizations 
+           (id, name, short_name, type, address, phone, website, inn, rector_name, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            org_id,
+            name,
+            short_name,
+            org_type,
+            address,
+            phone,
+            website,
+            inn,
+            rector_name,
+            int(time.time()),
+            user_id,
+        ),
+    )
+
+    # Создатель становится администратором
+    member_id = generate_uuid()
+    cur.execute(
+        """INSERT INTO organization_members 
+           (id, organization_id, user_id, roles, current_role, joined_at, profile_data)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            member_id,
+            org_id,
+            user_id,
+            json.dumps(["admin"]),
+            "admin",
+            int(time.time()),
+            json.dumps({}),
+        ),
+    )
+
+    db.commit()
+    log_audit(user_id, "ORGANIZATION_CREATED", org_id)
+
+    return (
+        jsonify(
+            {"organization_id": org_id, "message": "Organization created successfully"}
+        ),
+        201,
+    )
+
+
+@app.route("/api/organizations/<org_id>/profile", methods=["GET", "PUT", "OPTIONS"])
+def manage_organization_profile(org_id):
+    """Управление профилем организации"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем права (только администраторы могут редактировать)
+    if request.method == "PUT":
+        if not check_organization_permission(user_id, org_id, "admin"):
+            return jsonify({"error": "Permission denied"}), 403
+
+    if request.method == "GET":
+        cur.execute("""SELECT * FROM organizations WHERE id = ?""", (org_id,))
+        org = cur.fetchone()
+
+        if not org:
+            return jsonify({"error": "Organization not found"}), 404
+
+        # Получаем статистику
+        cur.execute(
+            "SELECT COUNT(*) as count FROM organization_members WHERE organization_id = ?",
+            (org_id,),
+        )
+        members_count = cur.fetchone()["count"]
+
+        cur.execute(
+            "SELECT COUNT(*) as count FROM groups WHERE organization_id = ?", (org_id,)
+        )
+        groups_count = cur.fetchone()["count"]
+
+        cur.execute(
+            "SELECT COUNT(*) as count FROM subjects WHERE organization_id = ?",
+            (org_id,),
+        )
+        subjects_count = cur.fetchone()["count"]
+
+        org_dict = dict(org)
+        org_dict["stats"] = {
+            "members": members_count,
+            "groups": groups_count,
+            "subjects": subjects_count,
+        }
+
+        return jsonify(org_dict)
+
+    else:  # PUT
+        data = request.json
+
+        cur.execute(
+            """UPDATE organizations 
+               SET name = ?, short_name = ?, address = ?, phone = ?, 
+                   website = ?, inn = ?, rector_name = ?
+               WHERE id = ?""",
+            (
+                data.get("name"),
+                data.get("short_name"),
+                data.get("address"),
+                data.get("phone"),
+                data.get("website"),
+                data.get("inn"),
+                data.get("rector_name"),
+                org_id,
+            ),
+        )
+
+        db.commit()
+        log_audit(user_id, "ORGANIZATION_UPDATED", org_id)
+
+        return jsonify({"message": "Organization updated"})
 
 
 # ========== УДАЛЕНИЕ ПРОСРОЧЕННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========

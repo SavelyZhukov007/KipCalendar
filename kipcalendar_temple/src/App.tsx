@@ -18,6 +18,7 @@ import Profile from './components/Profile';
 import SchedulePage from './components/Schedule';
 import Kipswift from "./components/Kipswift";
 import Verification from './components/Verification';
+import OrganizationManagement from './components/OrganizationManagement';
 import './App.css';
 
 const theme = createTheme();
@@ -69,6 +70,7 @@ function App() {
             <Route path="/schedule" element={<PrivateRoute><SchedulePage /></PrivateRoute>} /> {/* Расписание */}
             <Route path="/kipswift" element={<PrivateRoute><Kipswift /></PrivateRoute>} />
             <Route path="/verification" element={<Verification />} />
+            <Route path="/organizations/:orgId" element={<OrganizationManagement />} /> {/* Управление организацией */}
             {/* <Route path="/kipswift" element={<Kipswift />} /> */}
           </Routes>
         </Router>
