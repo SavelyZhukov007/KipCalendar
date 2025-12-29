@@ -13,7 +13,7 @@ import datetime
 import time
 from flask_mail import Mail, Message
 from threading import Timer
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import secrets
 import pandas as pd
 from werkzeug.utils import secure_filename
@@ -38,6 +38,23 @@ app.config["MAIL_PASSWORD"] = password  # App password для Gmail (не осн
 app.config["MAIL_DEFAULT_SENDER"] = "savely.zhukov.1583@gmail.com"  # От кого отправлять
 mail = Mail(app)  # Инициализация Flask-Mail
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+
+@socketio.on("join")
+def handle_join(data):
+    room = data.get("room")
+    if room:
+        join_room(room)
+        print(f"Joined room: {room}")
+
+
+@socketio.on("leave")
+def handle_leave(data):
+    room = data.get("room")
+    if room:
+        leave_room(room)
+        print(f"Left room: {room}")
+
 
 SECRET_KEY = "your_secret_key_change_me"
 DATABASE = "kipcalendar.db"
@@ -517,7 +534,10 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_groups_org ON groups(organization_id);
         CREATE INDEX IF NOT EXISTS idx_subjects_org ON subjects(organization_id);
         CREATE INDEX IF NOT EXISTS idx_lessons_group ON lessons(group_id);
-        CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);А
+        CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
+
+        ALTER TABLE users ADD COLUMN telegram_link_code TEXT;
+        ALTER TABLE users ADD COLUMN telegram_link_expires INTEGER;
         """
         )
         db.commit()
@@ -1718,7 +1738,41 @@ def update_own_profile():
 
 @app.route("/api/telegram/link", methods=["POST", "OPTIONS"])
 def link_telegram():
-    """Привязать Telegram аккаунт"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    data = request.json
+    telegram_id = data.get("telegram_id")
+    user_id = data.get("user_id")
+
+    if not telegram_id or not user_id:
+        return jsonify({"error": "telegram_id and user_id required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Check if user exists
+    cur.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+    if not cur.fetchone():
+        return jsonify({"error": "User not found"}), 404
+
+    # Check if already linked
+    cur.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+    if cur.fetchone():
+        return jsonify({"error": "Telegram ID already linked"}), 400
+
+    # Link
+    cur.execute("UPDATE users SET telegram_id = ? WHERE id = ?", (telegram_id, user_id))
+    db.commit()
+
+    log_audit(user_id, "TELEGRAM_LINKED")
+
+    return jsonify({"message": "Linked successfully"})
+
+
+@app.route("/api/telegram/generate-code", methods=["POST", "OPTIONS"])
+def generate_telegram_code():
+    """Генерировать код для привязки Telegram"""
     if request.method == "OPTIONS":
         return "", 200
 
@@ -1726,9 +1780,91 @@ def link_telegram():
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
+    code = (
+        generate_verification_code()
+    )  # Используйте существующую функцию для 6-значного кода
+    expires = int(time.time()) + 600  # 10 минут
+
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        "UPDATE users SET telegram_link_code = ?, telegram_link_expires = ? WHERE id = ?",
+        (code, expires, user_id),
+    )
+    db.commit()
+
+    log_audit(user_id, "TELEGRAM_CODE_GENERATED")
+
+    return jsonify({"code": code, "expires_in": 600})
+
+
+@app.route("/api/telegram/verify-code", methods=["POST", "OPTIONS"])
+def verify_telegram_code():
+    """Верифицировать код и привязать Telegram"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    data = request.json
+    code = data.get("code")
+    telegram_id = data.get("telegram_id")
+
+    if not code or not telegram_id:
+        return jsonify({"error": "code and telegram_id required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "SELECT id FROM users WHERE telegram_link_code = ? AND telegram_link_expires > ?",
+        (code, int(time.time())),
+    )
+    user = cur.fetchone()
+
+    if not user:
+        return jsonify({"error": "Invalid or expired code"}), 400
+
+    user_id = user["id"]
+
+    # Проверяем, не занят ли telegram_id
+    cur.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+    if cur.fetchone():
+        return jsonify({"error": "Telegram ID already linked"}), 400
+
+    # Привязываем
+    cur.execute(
+        "UPDATE users SET telegram_id = ?, telegram_link_code = NULL, telegram_link_expires = NULL WHERE id = ?",
+        (telegram_id, user_id),
+    )
+    db.commit()
+
+    log_audit(user_id, "TELEGRAM_LINKED")
+
+    return jsonify({"message": "Linked successfully"})
+
+
+@app.route("/api/telegram/linked-users", methods=["GET", "OPTIONS"])
+def get_linked_users():
+    """Получить список связанных пользователей для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    # В продакшене добавить аутентификацию бота, например API key
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        "SELECT id as user_id, telegram_id FROM users WHERE telegram_id IS NOT NULL"
+    )
+    users = [dict(row) for row in cur.fetchall()]
+    return jsonify(users)
+
+
+@app.route("/api/telegram/unlink", methods=["POST", "OPTIONS"])
+def unlink_telegram():
+    if request.method == "OPTIONS":
+        return "", 200
+
     data = request.json
     telegram_id = data.get("telegram_id")
-    verification_code = data.get("verification_code")  # Для безопасности
 
     if not telegram_id:
         return jsonify({"error": "telegram_id required"}), 400
@@ -1736,41 +1872,45 @@ def link_telegram():
     db = get_db()
     cur = db.cursor()
 
-    # Проверяем, не занят ли telegram_id
-    cur.execute(
-        "SELECT id FROM users WHERE telegram_id = ? AND id != ?", (telegram_id, user_id)
-    )
-    if cur.fetchone():
-        return jsonify({"error": "Telegram ID already linked to another account"}), 400
+    cur.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
+    user = cur.fetchone()
 
-    # Обновляем
-    cur.execute("UPDATE users SET telegram_id = ? WHERE id = ?", (telegram_id, user_id))
+    if not user:
+        return jsonify({"error": "Not linked"}), 404
+
+    cur.execute(
+        "UPDATE users SET telegram_id = NULL WHERE telegram_id = ?", (telegram_id,)
+    )
     db.commit()
 
-    log_audit(user_id, "TELEGRAM_LINKED", user_id)
+    log_audit(user["id"], "TELEGRAM_UNLINKED")
 
-    return jsonify({"message": "Telegram linked successfully"})
+    return jsonify({"message": "Unlinked successfully"})
 
 
-@app.route("/api/telegram/unlink", methods=["POST", "OPTIONS"])
-def unlink_telegram():
-    """Отвязать Telegram аккаунт"""
+@app.route("/api/telegram/status", methods=["GET", "OPTIONS"])
+def telegram_status():
+    """Проверить статус привязки"""
     if request.method == "OPTIONS":
         return "", 200
 
-    user_id = get_auth_user()
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
+    telegram_id = request.args.get("telegram_id")
+
+    if not telegram_id:
+        return jsonify({"error": "telegram_id required"}), 400
 
     db = get_db()
     cur = db.cursor()
 
-    cur.execute("UPDATE users SET telegram_id = NULL WHERE id = ?", (user_id,))
-    db.commit()
+    cur.execute("SELECT id, username FROM users WHERE telegram_id = ?", (telegram_id,))
+    user = cur.fetchone()
 
-    log_audit(user_id, "TELEGRAM_UNLINKED", user_id)
+    if not user:
+        return jsonify({"linked": False})
 
-    return jsonify({"message": "Telegram unlinked"})
+    return jsonify(
+        {"linked": True, "user_id": user["id"], "username": user["username"]}
+    )
 
 
 @app.route("/api/organizations/<org_id>/members", methods=["GET", "OPTIONS"])
@@ -2486,7 +2626,6 @@ def bulk_add_students_to_group(group_id):
             "errors": errors if errors else None,
         }
     )
-
 
 
 # ============ JOURNAL SUMMARY API ============
@@ -5456,6 +5595,7 @@ def check_expired_users():
             cur.execute("DELETE FROM users WHERE id = ?", (row["id"],))
         db.commit()
     Timer(86400, check_expired_users).start()
+
 
 # Запускаем проверку просроченных пользователей при старте
 check_expired_users()
