@@ -5596,10 +5596,7 @@ def check_expired_users():
         db.commit()
     Timer(86400, check_expired_users).start()
 
-
 # Запускаем проверку просроченных пользователей при старте
 check_expired_users()
 if __name__ == "__main__":
     socketio.run(app, port=5000, debug=True, host="0.0.0.0")
-
-# Вы хоть почитайте что получилось в итоге
