@@ -237,5 +237,32 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
         </Dialog>
     );
 };
+{/*Внедрить!
+// CreateOrganizationDialog.tsx - Change to request instead of create
+// Add fields: message, attachments
 
+const [requestMessage, setRequestMessage] = useState('');
+const [attachments, setAttachments] = useState<File[]>([]);
+
+// In step content, add in last step:
+<TextField
+  fullWidth
+  label="Сообщение для администратора"
+  value={requestMessage}
+  onChange={(e) => setRequestMessage(e.target.value)}
+  multiline
+  rows={4}
+  margin="normal"
+/>
+<Input type="file" multiple onChange={(e) => setAttachments(Array.from(e.target.files || []))} />
+
+// In handleSubmit:
+const formData = new FormData();
+Object.entries(formDataState).forEach(([k, v]) => formData.append(k, v));
+formData.append('message', requestMessage);
+attachments.forEach((file, i) => formData.append(`file_${i}`, file));
+
+// Fetch to /api/organizations/request, method POST, body: formData
+// On success: Alert 'Request sent'
+*/}
 export default CreateOrganizationDialog;

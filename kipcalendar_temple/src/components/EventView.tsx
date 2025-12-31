@@ -139,5 +139,23 @@ const EventView: React.FC = () => {
     </Container>
   );
 };
+{/*ВНЕДРИТЬ
+  // EventView.tsx - Ensure public/private work, add button to copy to calendar
 
+// In component, after loading event:
+<Button onClick={handleCopyToCalendar}>Добавить в свой календарь</Button>
+
+const handleCopyToCalendar = async () => {
+  try {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_BASE_URL}/api/events/${event.id}/copy`, {
+      method: 'POST',
+      headers: { 'Authorization': token || '' }
+    });
+    if (response.ok) {
+      alert('Событие добавлено в ваш календарь');
+    }
+  } catch (err) {}
+};
+  */}
 export default EventView;

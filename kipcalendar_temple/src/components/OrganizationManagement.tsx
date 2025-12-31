@@ -8,7 +8,12 @@ import {
   Card,
   CardContent,
   Button,
-  Grid
+  Grid,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  TextField
 } from '@mui/material';
 import { useParams } from 'react-router-dom';
 import { API_BASE_URL } from '../config';
@@ -167,5 +172,32 @@ const OrganizationManagement: React.FC = () => {
     </Container>
   );
 };
+{/*Внедрить!
+// OrganizationManagement.tsx - Complete implementation
+// Add forms for tabs: buildings, groups, subjects, schedule, members, invites
 
+import { FormControl, InputLabel, Select, MenuItem, Grid, TextField } from '@mui/material';
+
+// Example for Groups tab
+<TabPanel value={tabValue} index={2}>
+  <form onSubmit={handleCreateGroup}>
+    <TextField label="Название группы" fullWidth sx={{ mb: 2 }} />
+    <TextField label="Специальность" fullWidth sx={{ mb: 2 }} />
+    <TextField label="Курс" type="number" fullWidth sx={{ mb: 2 }} />
+    <Button type="submit" variant="contained">Создать</Button>
+  </form>
+  // List existing groups
+</TabPanel>
+
+// Similar for other tabs
+// For schedule: Upload excel or form
+// For members: List, add/remove
+// For invites: Generate links with roles
+
+const handleCreateGroup = async (e) => {
+  e.preventDefault();
+  // Fetch to /api/groups/create
+  // ...
+};
+*/}
 export default OrganizationManagement;

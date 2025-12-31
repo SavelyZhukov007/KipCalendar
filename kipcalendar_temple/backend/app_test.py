@@ -185,7 +185,8 @@ def init_db():
         cur = db.cursor()
 
         # Создание основных таблиц (используем executescript для блока CREATE TABLE)
-        db.executescript("""
+        db.executescript(
+            """
             -- Users table (с UUID)
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -531,55 +532,59 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_subjects_org ON subjects(organization_id);
             CREATE INDEX IF NOT EXISTS idx_lessons_group ON lessons(group_id);
             CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
-        """)
+        """
+        )
 
         # Теперь добавляем столбцы через ALTER с try-except (без IF NOT EXISTS)
         # Для organizations
         try:
             cur.execute("ALTER TABLE organizations ADD COLUMN address TEXT")
         except sqlite3.OperationalError as e:
-            if 'duplicate column' not in str(e).lower():
+            if "duplicate column" not in str(e).lower():
                 raise
 
         try:
             cur.execute("ALTER TABLE organizations ADD COLUMN phone TEXT")
         except sqlite3.OperationalError as e:
-            if 'duplicate column' not in str(e).lower():
+            if "duplicate column" not in str(e).lower():
                 raise
 
         try:
             cur.execute("ALTER TABLE organizations ADD COLUMN website TEXT")
         except sqlite3.OperationalError as e:
-            if 'duplicate column' not in str(e).lower():
+            if "duplicate column" not in str(e).lower():
                 raise
 
         try:
             cur.execute("ALTER TABLE organizations ADD COLUMN inn TEXT")
         except sqlite3.OperationalError as e:
-            if 'duplicate column' not in str(e).lower():
+            if "duplicate column" not in str(e).lower():
                 raise
 
         try:
             cur.execute("ALTER TABLE organizations ADD COLUMN rector_name TEXT")
         except sqlite3.OperationalError as e:
-            if 'duplicate column' not in str(e).lower():
+            if "duplicate column" not in str(e).lower():
                 raise
 
         # Для users - telegram_link_code и expires
         try:
             cur.execute("ALTER TABLE users ADD COLUMN telegram_link_code TEXT")
         except sqlite3.OperationalError as e:
-            if 'duplicate column' not in str(e).lower():
+            if "duplicate column" not in str(e).lower():
                 raise
 
         try:
             cur.execute("ALTER TABLE users ADD COLUMN telegram_link_expires INTEGER")
         except sqlite3.OperationalError as e:
-            if 'duplicate column' not in str(e).lower():
+            if "duplicate column" not in str(e).lower():
                 raise
 
         db.commit()
+
+
 init_db()
+
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -2712,55 +2717,55 @@ def search_users():
     return jsonify({"error": "User not found"}), 404
 
 
-@app.route("/api/chats/create", methods=["POST", "OPTIONS"])
-def create_chat():
-    if request.method == "OPTIONS":
-        return "", 200
+# @app.route("/api/chats/create", methods=["POST", "OPTIONS"])
+# def create_chat():
+#     if request.method == "OPTIONS":
+#         return "", 200
 
-    user_id = get_auth_user()
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
+#     user_id = get_auth_user()
+#     if not user_id:
+#         return jsonify({"error": "Unauthorized"}), 401
 
-    data = request.json
-    target_user_id = data.get("user_id")
+#     data = request.json
+#     target_user_id = data.get("user_id")
 
-    db = get_db()
-    cur = db.cursor()
+#     db = get_db()
+#     cur = db.cursor()
 
-    # Проверяем существующий чат
-    cur.execute(
-        """
-        SELECT c.id FROM chats c
-        JOIN chat_members cm1 ON c.id = cm1.chat_id
-        JOIN chat_members cm2 ON c.id = cm2.chat_id
-        WHERE c.type = 'direct' 
-        AND cm1.user_id = ? AND cm2.user_id = ?
-    """,
-        (user_id, target_user_id),
-    )
+#     # Проверяем существующий чат
+#     cur.execute(
+#         """
+#         SELECT c.id FROM chats c
+#         JOIN chat_members cm1 ON c.id = cm1.chat_id
+#         JOIN chat_members cm2 ON c.id = cm2.chat_id
+#         WHERE c.type = 'direct' 
+#         AND cm1.user_id = ? AND cm2.user_id = ?
+#     """,
+#         (user_id, target_user_id),
+#     )
 
-    existing = cur.fetchone()
-    if existing:
-        return jsonify({"chat_id": existing["id"]})
+#     existing = cur.fetchone()
+#     if existing:
+#         return jsonify({"chat_id": existing["id"]})
 
-    # Создаем новый чат
-    chat_id = generate_uuid()
-    cur.execute(
-        "INSERT INTO chats (id, type, created_at) VALUES (?, 'direct', ?)",
-        (chat_id, int(time.time())),
-    )
+#     # Создаем новый чат
+#     chat_id = generate_uuid()
+#     cur.execute(
+#         "INSERT INTO chats (id, type, created_at) VALUES (?, 'direct', ?)",
+#         (chat_id, int(time.time())),
+#     )
 
-    cur.execute(
-        "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
-        (chat_id, user_id, int(time.time())),
-    )
-    cur.execute(
-        "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
-        (chat_id, target_user_id, int(time.time())),
-    )
+#     cur.execute(
+#         "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
+#         (chat_id, user_id, int(time.time())),
+#     )
+#     cur.execute(
+#         "INSERT INTO chat_members (chat_id, user_id, joined_at) VALUES (?, ?, ?)",
+#         (chat_id, target_user_id, int(time.time())),
+#     )
 
-    db.commit()
-    return jsonify({"chat_id": chat_id})
+#     db.commit()
+#     return jsonify({"chat_id": chat_id})
 
 
 @app.route("/api/chats", methods=["GET", "OPTIONS"])
@@ -5668,6 +5673,7 @@ def get_linked_telegram_users():
 
 # ============ HOMEWORK ENDPOINT ============
 
+
 @app.route("/api/homework/student/<student_id>", methods=["GET", "OPTIONS"])
 def get_student_homework(student_id):
     """Получить домашние задания студента"""
@@ -5678,7 +5684,9 @@ def get_student_homework(student_id):
     if not user_id:
         return jsonify({"error": "Unauthorized"}), 401
 
-    from_date = request.args.get("from_date", datetime.datetime.now().strftime("%Y-%m-%d"))
+    from_date = request.args.get(
+        "from_date", datetime.datetime.now().strftime("%Y-%m-%d")
+    )
 
     db = get_db()
     cur = db.cursor()
@@ -5694,7 +5702,7 @@ def get_student_homework(student_id):
            AND al.homework != ''
            AND al.date >= ?
            ORDER BY al.date ASC""",
-        (student_id, from_date)
+        (student_id, from_date),
     )
 
     homework = [dict(row) for row in cur.fetchall()]
@@ -5703,54 +5711,269 @@ def get_student_homework(student_id):
 
 # ============ SOCKET.IO HANDLERS FOR MESSENGER ============
 
-@socketio.on('connect')
+
+@socketio.on("connect")
 def handle_connect():
     """Обработка подключения клиента"""
-    print(f'Client connected: {request.sid}')
+    print(f"Client connected: {request.sid}")
 
 
-@socketio.on('disconnect')
+@socketio.on("disconnect")
 def handle_disconnect():
     """Обработка отключения клиента"""
-    print(f'Client disconnected: {request.sid}')
+    print(f"Client disconnected: {request.sid}")
 
 
-@socketio.on('join_chat')
+@socketio.on("join_chat")
 def handle_join_chat(data):
     """Присоединение к комнате чата"""
-    chat_id = data.get('chat_id')
+    chat_id = data.get("chat_id")
     if chat_id:
         join_room(chat_id)
-        print(f'User joined chat: {chat_id}')
+        print(f"User joined chat: {chat_id}")
 
 
-@socketio.on('leave_chat')
+@socketio.on("leave_chat")
 def handle_leave_chat(data):
     """Выход из комнаты чата"""
-    chat_id = data.get('chat_id')
+    chat_id = data.get("chat_id")
     if chat_id:
         leave_room(chat_id)
-        print(f'User left chat: {chat_id}')
+        print(f"User left chat: {chat_id}")
 
 
-@socketio.on('typing')
+@socketio.on("typing")
 def handle_typing(data):
     """Уведомление о наборе текста"""
-    chat_id = data.get('chat_id')
-    username = data.get('username')
+    chat_id = data.get("chat_id")
+    username = data.get("username")
     if chat_id:
-        emit('user_typing', {'username': username}, room=chat_id, include_self=False)
+        emit("user_typing", {"username": username}, room=chat_id, include_self=False)
 
 
-@socketio.on('stop_typing')
+@socketio.on("stop_typing")
 def handle_stop_typing(data):
     """Остановка набора текста"""
-    chat_id = data.get('chat_id')
+    chat_id = data.get("chat_id")
     if chat_id:
-        emit('user_stop_typing', {}, room=chat_id, include_self=False)
+        emit("user_stop_typing", {}, room=chat_id, include_self=False)
+
+
+@socketio.on("new_message")
+def handle_new_message(data):
+    chat_id = data["chat_id"]
+    message = data["message"]
+
+    # Save to DB...
+    # ... existing code ...
+
+    # Broadcast to room (all members)
+    emit("new_message", {"chat_id": chat_id, "message": message}, room=chat_id)
+
+    print(f"Broadcasted new message to room {chat_id}")  # Debug
 
 
 # ============ ENHANCED CHAT ENDPOINTS ============
+
+# app_test.py - Add endpoint for message search
+
+
+@app.route("/api/messages/search", methods=["GET", "OPTIONS"])
+def search_messages():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    query = request.args.get("query", "").strip()
+    if not query:
+        return jsonify([])
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Search messages in user's chats
+    cur.execute(
+        """
+        SELECT m.*, c.name as chat_name
+        FROM messages m
+        JOIN chats c ON m.chat_id = c.id
+        JOIN chat_members cm ON c.id = cm.chat_id
+        WHERE cm.user_id = ? AND m.content LIKE ?
+        ORDER BY m.sent_at DESC
+        LIMIT 50
+    """,
+        (user_id, f"%{query}%"),
+    )
+
+    results = cur.fetchall()
+    return jsonify(results)
+
+
+# app_test.py - Modify /api/chats/create for groups
+
+
+@app.route("/api/chats/create", methods=["POST", "OPTIONS"])
+def create_chat():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    chat_type = data.get("type", "private")
+    db = get_db()
+    cur = db.cursor()
+    chat_id = generate_uuid()
+    timestamp = int(time.time())
+
+    cur.execute(
+        """INSERT INTO chats (id, type, name, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?)""",
+        (chat_id, chat_type, data.get("name"), timestamp, user_id),
+    )
+
+    # Add creator
+    cur.execute(
+        """INSERT INTO chat_members (chat_id, user_id, joined_at, role)
+           VALUES (?, ?, ?, ?)""",
+        (chat_id, user_id, timestamp, "admin" if chat_type == "group" else "member"),
+    )
+
+    if chat_type == "private":
+        target_user = data.get("user_id")
+        if not target_user:
+            return jsonify({"error": "User ID required for private chat"}), 400
+        cur.execute(
+            """INSERT INTO chat_members (chat_id, user_id, joined_at)
+               VALUES (?, ?, ?)""",
+            (chat_id, target_user, timestamp),
+        )
+    elif chat_type == "group":
+        users = data.get("users", [])
+        for u in users:
+            cur.execute(
+                """INSERT INTO chat_members (chat_id, user_id, joined_at)
+                   VALUES (?, ?, ?)""",
+                (chat_id, u, timestamp),
+            )
+
+    db.commit()
+    return jsonify({"chat_id": chat_id})
+
+
+# app_test.py - Add /api/organizations/request
+
+
+@app.route("/api/organizations/request", methods=["POST"])
+def request_organization():
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    db = get_db()
+    cur = db.cursor()
+    # Parse form data
+    org_type = request.form.get("type")
+    name = request.form.get("name")
+    # ... other fields
+    message = request.form.get("message")
+    files = request.files  # Multiple files
+
+    # Save request to DB, say organization_requests table
+    request_id = generate_uuid()
+    cur.execute(
+        """INSERT INTO organization_requests (id, user_id, data, status, created_at)
+           VALUES (?, ?, ?, 'pending', ?)""",
+        (request_id, user_id, json.dumps(request.form.to_dict()), int(time.time())),
+    )
+    # Save files to uploads/request_id/
+    os.makedirs(f"uploads/requests/{request_id}", exist_ok=True)
+    for file in files.getlist("file"):
+        filename = secure_filename(file.filename)
+        file.save(os.path.join(f"uploads/requests/{request_id}", filename))
+
+    db.commit()
+
+    # Send email to admin
+    admin_email = "savely.zhukov.1583@gmail.com"
+    msg = Message("New Organization Request", recipients=[admin_email])
+    msg.body = f"User {user_id} requests to create org: {name}\nMessage: {message}\nApprove: http://site/approve/{request_id}\nReject: http://site/reject/{request_id}"
+    # Attach files
+    for file in os.listdir(f"uploads/requests/{request_id}"):
+        with app.open_resource(
+            os.path.join(f"uploads/requests/{request_id}", file)
+        ) as fp:
+            msg.attach(file, "application/octet-stream", fp.read())
+    mail.send(msg)
+
+    return jsonify({"message": "Request sent"})
+
+
+# Add /approve/<id> and /reject/<id> endpoints, protected
+@app.route("/approve/<request_id>", methods=["POST"])
+def approve_request(request_id):
+    # Check if admin (hardcode email/user)
+    # If yes, create org from data, notify user
+    i = 0
+    i += 1
+
+
+# app_test.py - Add /api/events/<id>/copy
+
+
+@app.route("/api/events/<event_id>/copy", methods=["POST"])
+def copy_event(event_id):
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Get event data
+    cur.execute("SELECT * FROM events WHERE id = ?", (event_id,))
+    event = cur.fetchone()
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+
+    # Check access: public or shared with user
+    if event["visibility"] != "public":
+        # Check if shared
+        cur.execute(
+            "SELECT * FROM shared_events WHERE event_id = ? AND user_id = ?",
+            (event_id, user_id),
+        )
+        if not cur.fetchone():
+            return jsonify({"error": "No access"}), 403
+
+    # Copy to user's calendar
+    new_id = generate_uuid()
+    cur.execute(
+        """INSERT INTO events (id, user_id, name, date, time, end_time, event_type, content, sub_tasks, description, recurring_options, visibility)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            new_id,
+            user_id,
+            event["name"],
+            event["date"],
+            event["time"],
+            event["end_time"],
+            event["event_type"],
+            event["content"],
+            event["sub_tasks"],
+            event["description"],
+            event["recurring_options"],
+            "private",
+        ),
+    )
+    db.commit()
+
+    return jsonify({"message": "Copied"})
+
 
 @app.route("/api/chats/<chat_id>/mark-read", methods=["POST", "OPTIONS"])
 def mark_chat_as_read(chat_id):
@@ -5770,7 +5993,7 @@ def mark_chat_as_read(chat_id):
         """UPDATE chat_members 
            SET last_read_at = ? 
            WHERE chat_id = ? AND user_id = ?""",
-        (int(time.time()), chat_id, user_id)
+        (int(time.time()), chat_id, user_id),
     )
     db.commit()
 
@@ -5794,21 +6017,22 @@ def get_unread_count(chat_id):
     cur.execute(
         """SELECT last_read_at FROM chat_members 
            WHERE chat_id = ? AND user_id = ?""",
-        (chat_id, user_id)
+        (chat_id, user_id),
     )
     member = cur.fetchone()
-    
+
     last_read = member["last_read_at"] if member and member["last_read_at"] else 0
 
     # Считаем непрочитанные
     cur.execute(
         """SELECT COUNT(*) as count FROM messages 
            WHERE chat_id = ? AND sender_id != ? AND sent_at > ?""",
-        (chat_id, user_id, last_read)
+        (chat_id, user_id, last_read),
     )
-    
+
     count = cur.fetchone()["count"]
     return jsonify({"unread_count": count})
+
 
 # Запускаем проверку просроченных пользователей при старте
 # check_expired_users()
