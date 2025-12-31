@@ -1,37 +1,28 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Container,
+    Typography,
     Card,
     CardContent,
-    Typography,
     Button,
-    Box,
     TextField,
-    Avatar,
+    Box,
+    Alert,
     Chip,
     Stack,
     Divider,
-    Alert,
     Dialog,
     DialogTitle,
     DialogContent,
     DialogActions,
-    List,
-    ListItem,
-    ListItemText,
-    ListItemButton,
     IconButton,
-    Tooltip
+    Snackbar
 } from '@mui/material';
 import {
     Edit as EditIcon,
-    ExitToApp as LogoutIcon,
     ContentCopy as CopyIcon,
-    Business as BusinessIcon,
-    Telegram as TelegramIcon,
-    Add as AddIcon,
-    SwapHoriz as SwapIcon,
-    Email as EmailIcon
+    Check as CheckIcon,
+    Telegram as TelegramIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import CreateOrganizationDialog from './CreateOrganizationDialog';
@@ -41,56 +32,60 @@ interface UserProfile {
     id: string;
     username: string;
     email: string;
-    first_name: string;
-    last_name: string;
-    middle_name: string;
+    first_name?: string;
+    last_name?: string;
+    middle_name?: string;
     roles: string[];
     current_role: string;
     telegram_linked: boolean;
-    organizations: Organization[];
+    organizations: Array<{
+        id: string;
+        name: string;
+        short_name?: string;
+        roles: string[];
+        current_role: string;
+    }>;
+    groups?: Array<{
+        id: string;
+        name: string;
+        specialty?: string;
+        course?: number;
+        organization_name: string;
+    }>;
+    subjects?: Array<{
+        id: string;
+        name: string;
+        code?: string;
+        organization_name: string;
+    }>;
 }
-
-interface Organization {
-    id: string;
-    name: string;
-    short_name: string;
-    roles: string[];
-    current_role: string;
-}
-
-const roleLabels: { [key: string]: string } = {
-    admin: 'Администратор',
-    teacher: 'Преподаватель',
-    student: 'Студент',
-    curator: 'Куратор'
-};
-
-const roleColors: { [key: string]: 'primary' | 'secondary' | 'success' | 'warning' | 'error' } = {
-    admin: 'error',
-    teacher: 'primary',
-    student: 'success',
-    curator: 'warning'
-};
 
 const Profile: React.FC = () => {
     const navigate = useNavigate();
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
 
-    const [editDialogOpen, setEditDialogOpen] = useState(false);
-    const [createOrgOpen, setCreateOrgOpen] = useState(false);
-    const [roleDialogOpen, setRoleDialogOpen] = useState(false);
-    const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
-
+    // Editing state
+    const [editMode, setEditMode] = useState(false);
     const [editForm, setEditForm] = useState({
         first_name: '',
         last_name: '',
         middle_name: '',
         email: ''
     });
-    const [telegramId, setTelegramId] = useState('');
-    const [copySuccess, setCopySuccess] = useState(false);
+
+    // Telegram linking
+    const [telegramDialogOpen, setTelegramDialogOpen] = useState(false);
+    const [telegramCode, setTelegramCode] = useState('');
+    const [telegramCodeCopied, setTelegramCodeCopied] = useState(false);
+
+    // Create org dialog
+    const [createOrgOpen, setCreateOrgOpen] = useState(false);
+
+    // Snackbar
+    const [snackbar, setSnackbar] = useState({ open: false, message: '' });
 
     useEffect(() => {
         fetchProfile();
@@ -101,7 +96,7 @@ const Profile: React.FC = () => {
             const token = localStorage.getItem('token');
             const userId = localStorage.getItem('user_id');
 
-            if (!token || !userId) {
+            if (!userId) {
                 navigate('/login');
                 return;
             }
@@ -109,7 +104,7 @@ const Profile: React.FC = () => {
             const response = await fetch(
                 `${API_BASE_URL}/api/users/${userId}/profile`,
                 {
-                    headers: { 'Authorization': token }
+                    headers: { 'Authorization': token || '' }
                 }
             );
 
@@ -134,27 +129,6 @@ const Profile: React.FC = () => {
         }
     };
 
-    const handleLogout = () => {
-        const token = localStorage.getItem('token');
-
-        fetch(`${API_BASE_URL}/logout`, {
-            method: 'POST',
-            headers: { 'Authorization': token || '' }
-        });
-
-        localStorage.removeItem('token');
-        localStorage.removeItem('user_id');
-        navigate('/login');
-    };
-
-    const handleCopyUserId = () => {
-        if (profile) {
-            navigator.clipboard.writeText(profile.id);
-            setCopySuccess(true);
-            setTimeout(() => setCopySuccess(false), 2000);
-        }
-    };
-
     const handleUpdateProfile = async () => {
         try {
             const token = localStorage.getItem('token');
@@ -171,7 +145,8 @@ const Profile: React.FC = () => {
             );
 
             if (response.ok) {
-                setEditDialogOpen(false);
+                setSuccess('Профиль обновлён');
+                setEditMode(false);
                 fetchProfile();
             } else {
                 const data = await response.json();
@@ -182,58 +157,26 @@ const Profile: React.FC = () => {
         }
     };
 
-    const handleSwitchRole = async (newRole: string) => {
+    const handleGenerateTelegramCode = async () => {
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(
-                `${API_BASE_URL}/switch-role`,
+                `${API_BASE_URL}/api/telegram/generate-code`,
                 {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': token || ''
-                    },
-                    body: JSON.stringify({ newRole })
+                    }
                 }
             );
 
             if (response.ok) {
-                setRoleDialogOpen(false);
-                fetchProfile();
-                window.location.reload();
-            }
-        } catch (err) {
-            setError('Ошибка смены роли');
-        }
-    };
-
-    const handleLinkTelegram = async () => {
-        if (!telegramId.trim()) {
-            setError('Введите Telegram ID');
-            return;
-        }
-
-        try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(
-                `${API_BASE_URL}/api/telegram/link`,
-                {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': token || ''
-                    },
-                    body: JSON.stringify({ telegram_id: telegramId })
-                }
-            );
-
-            if (response.ok) {
-                setTelegramDialogOpen(false);
-                setTelegramId('');
-                fetchProfile();
-            } else {
                 const data = await response.json();
-                setError(data.error || 'Ошибка привязки');
+                setTelegramCode(data.code);
+                setTelegramDialogOpen(true);
+            } else {
+                setError('Ошибка генерации кода');
             }
         } catch (err) {
             setError('Ошибка сети');
@@ -241,17 +184,23 @@ const Profile: React.FC = () => {
     };
 
     const handleUnlinkTelegram = async () => {
+        if (!window.confirm('Отвязать Telegram?')) return;
+
         try {
             const token = localStorage.getItem('token');
             const response = await fetch(
                 `${API_BASE_URL}/api/telegram/unlink`,
                 {
                     method: 'POST',
-                    headers: { 'Authorization': token || '' }
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': token || ''
+                    }
                 }
             );
 
             if (response.ok) {
+                setSuccess('Telegram отвязан');
                 fetchProfile();
             }
         } catch (err) {
@@ -259,13 +208,35 @@ const Profile: React.FC = () => {
         }
     };
 
-    const handleOrganizationClick = (orgId: string) => {
-        navigate(`/organizations/${orgId}`);
+    const copyToClipboard = (text: string) => {
+        navigator.clipboard.writeText(text);
+        setTelegramCodeCopied(true);
+        setTimeout(() => setTelegramCodeCopied(false), 2000);
+    };
+
+    const getRoleLabel = (role: string) => {
+        const labels: Record<string, string> = {
+            admin: 'Администратор',
+            teacher: 'Преподаватель',
+            student: 'Студент',
+            curator: 'Куратор'
+        };
+        return labels[role] || role;
+    };
+
+    const getRoleColor = (role: string) => {
+        const colors: Record<string, any> = {
+            admin: 'error',
+            teacher: 'primary',
+            student: 'success',
+            curator: 'warning'
+        };
+        return colors[role] || 'default';
     };
 
     if (loading) {
         return (
-            <Container maxWidth="md" sx={{ mt: 4, textAlign: 'center' }}>
+            <Container maxWidth="md" sx={{ mt: 4 }}>
                 <Typography>Загрузка...</Typography>
             </Container>
         );
@@ -287,306 +258,387 @@ const Profile: React.FC = () => {
                 </Alert>
             )}
 
-            {copySuccess && (
-                <Alert severity="success" sx={{ mb: 2 }}>
-                    User ID скопирован в буфер обмена!
+            {success && (
+                <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess('')}>
+                    {success}
                 </Alert>
             )}
 
+            {/* User ID Card */}
             <Card sx={{ mb: 3 }}>
                 <CardContent>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-                        <Avatar
+                    <Typography variant="h6" gutterBottom>
+                        Информация о пользователе
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                        <Typography variant="body2" color="text.secondary">
+                            User ID:
+                        </Typography>
+                        <Typography
+                            variant="body2"
                             sx={{
-                                width: 80,
-                                height: 80,
-                                bgcolor: 'primary.main',
-                                fontSize: '2rem',
-                                mr: 3
+                                fontFamily: 'monospace',
+                                bgcolor: 'grey.100',
+                                p: 0.5,
+                                borderRadius: 1
                             }}
                         >
-                            {profile.first_name?.[0] || profile.username[0].toUpperCase()}
-                        </Avatar>
-
-                        <Box sx={{ flexGrow: 1 }}>
-                            <Typography variant="h5" gutterBottom>
-                                {profile.first_name && profile.last_name
-                                    ? `${profile.last_name} ${profile.first_name} ${profile.middle_name || ''}`
-                                    : profile.username}
-                            </Typography>
-
-                            <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-                                {profile.roles.map((role) => (
-                                    <Chip
-                                        key={role}
-                                        label={roleLabels[role] || role}
-                                        color={roleColors[role] || 'default'}
-                                        size="small"
-                                        variant={role === profile.current_role ? 'filled' : 'outlined'}
-                                    />
-                                ))}
-                            </Stack>
-
-                            <Typography variant="body2" color="text.secondary">
-                                <EmailIcon sx={{ fontSize: 16, verticalAlign: 'middle', mr: 0.5 }} />
-                                {profile.email}
-                            </Typography>
-                        </Box>
-
-                        <Box>
-                            <IconButton onClick={() => setEditDialogOpen(true)} color="primary">
-                                <EditIcon />
-                            </IconButton>
-                            <IconButton onClick={handleLogout} color="error">
-                                <LogoutIcon />
-                            </IconButton>
-                        </Box>
+                            {profile.id}
+                        </Typography>
+                        <IconButton
+                            size="small"
+                            onClick={() => {
+                                copyToClipboard(profile.id);
+                                setSnackbar({ open: true, message: 'User ID скопирован' });
+                            }}
+                        >
+                            <CopyIcon fontSize="small" />
+                        </IconButton>
                     </Box>
 
-                    <Divider sx={{ my: 2 }} />
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Username: <strong>{profile.username}</strong>
+                    </Typography>
 
-                    <Box sx={{ mb: 2 }}>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                            User ID
+                    <Box sx={{ mt: 2 }}>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                            Роли:
                         </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography
-                                variant="body1"
-                                sx={{
-                                    fontFamily: 'monospace',
-                                    bgcolor: 'grey.100',
-                                    px: 2,
-                                    py: 1,
-                                    borderRadius: 1,
-                                    flexGrow: 1
-                                }}
-                            >
-                                {profile.id}
-                            </Typography>
-                            <Tooltip title="Копировать">
-                                <IconButton onClick={handleCopyUserId} size="small">
-                                    <CopyIcon />
-                                </IconButton>
-                            </Tooltip>
-                        </Box>
-                    </Box>
-
-                    <Box sx={{ mb: 2 }}>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                            Текущая роль
-                        </Typography>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Chip
-                                label={roleLabels[profile.current_role] || profile.current_role}
-                                color={roleColors[profile.current_role] || 'default'}
-                            />
-                            {profile.roles.length > 1 && (
-                                <Button
-                                    size="small"
-                                    startIcon={<SwapIcon />}
-                                    onClick={() => setRoleDialogOpen(true)}
-                                >
-                                    Сменить роль
-                                </Button>
-                            )}
-                        </Box>
-                    </Box>
-
-                    <Box>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                            Telegram
-                        </Typography>
-                        {profile.telegram_linked ? (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Stack direction="row" spacing={1} flexWrap="wrap">
+                            {profile.roles.map((role) => (
                                 <Chip
-                                    icon={<TelegramIcon />}
-                                    label="Подключён"
-                                    color="success"
+                                    key={role}
+                                    label={getRoleLabel(role)}
+                                    color={getRoleColor(role)}
                                     size="small"
+                                    variant={role === profile.current_role ? 'filled' : 'outlined'}
                                 />
-                                <Button
-                                    size="small"
-                                    color="error"
-                                    onClick={handleUnlinkTelegram}
-                                >
-                                    Отвязать
-                                </Button>
-                            </Box>
-                        ) : (
-                            <Button
-                                variant="outlined"
-                                startIcon={<TelegramIcon />}
-                                onClick={() => setTelegramDialogOpen(true)}
-                                size="small"
-                            >
-                                Подключить Telegram
-                            </Button>
-                        )}
+                            ))}
+                        </Stack>
                     </Box>
                 </CardContent>
             </Card>
 
+            {/* Personal Info Card */}
             <Card sx={{ mb: 3 }}>
                 <CardContent>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                         <Typography variant="h6">
-                            <BusinessIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-                            Мои организации
+                            Личные данные
                         </Typography>
-                        <Button
-                            variant="contained"
-                            startIcon={<AddIcon />}
-                            onClick={() => setCreateOrgOpen(true)}
-                        >
-                            Создать организацию
-                        </Button>
+                        {!editMode && (
+                            <IconButton onClick={() => setEditMode(true)}>
+                                <EditIcon />
+                            </IconButton>
+                        )}
                     </Box>
 
-                    {profile.organizations && profile.organizations.length > 0 ? (
-                        <List>
-                            {profile.organizations.map((org) => (
-                                <ListItem
-                                    key={org.id}
-                                    disablePadding
-                                    secondaryAction={
-                                        <Stack direction="row" spacing={0.5}>
-                                            {org.roles.map((role) => (
-                                                <Chip
-                                                    key={role}
-                                                    label={roleLabels[role] || role}
-                                                    size="small"
-                                                    color={roleColors[role]}
-                                                    variant={role === org.current_role ? 'filled' : 'outlined'}
-                                                />
-                                            ))}
-                                        </Stack>
-                                    }
-                                >
-                                    <ListItemButton onClick={() => handleOrganizationClick(org.id)}>
-                                        <ListItemText
-                                            primary={org.name}
-                                            secondary={org.short_name}
-                                        />
-                                    </ListItemButton>
-                                </ListItem>
-                            ))}
-                        </List>
+                    {editMode ? (
+                        <Box component="form" sx={{ '& > *': { mb: 2 } }}>
+                            <TextField
+                                fullWidth
+                                label="Фамилия"
+                                value={editForm.last_name}
+                                onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+                            />
+                            <TextField
+                                fullWidth
+                                label="Имя"
+                                value={editForm.first_name}
+                                onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+                            />
+                            <TextField
+                                fullWidth
+                                label="Отчество"
+                                value={editForm.middle_name}
+                                onChange={(e) => setEditForm({ ...editForm, middle_name: e.target.value })}
+                            />
+                            <TextField
+                                fullWidth
+                                label="Email"
+                                type="email"
+                                value={editForm.email}
+                                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                            />
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Button variant="contained" onClick={handleUpdateProfile}>
+                                    Сохранить
+                                </Button>
+                                <Button variant="outlined" onClick={() => setEditMode(false)}>
+                                    Отмена
+                                </Button>
+                            </Box>
+                        </Box>
                     ) : (
-                        <Alert severity="info">
-                            Вы пока не состоите ни в одной организации. Создайте новую или примите приглашение.
-                        </Alert>
+                        <Box>
+                            <Typography variant="body1" gutterBottom>
+                                {profile.last_name} {profile.first_name} {profile.middle_name}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                                Email: {profile.email}
+                            </Typography>
+                        </Box>
                     )}
                 </CardContent>
             </Card>
 
-            <Dialog open={editDialogOpen} onClose={() => setEditDialogOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Редактировать профиль</DialogTitle>
-                <DialogContent>
-                    <TextField
-                        fullWidth
-                        label="Имя"
-                        value={editForm.first_name}
-                        onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
-                        margin="normal"
-                    />
-                    <TextField
-                        fullWidth
-                        label="Фамилия"
-                        value={editForm.last_name}
-                        onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
-                        margin="normal"
-                    />
-                    <TextField
-                        fullWidth
-                        label="Отчество"
-                        value={editForm.middle_name}
-                        onChange={(e) => setEditForm({ ...editForm, middle_name: e.target.value })}
-                        margin="normal"
-                    />
-                    <TextField
-                        fullWidth
-                        label="Email"
-                        type="email"
-                        value={editForm.email}
-                        onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                        margin="normal"
-                    />
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setEditDialogOpen(false)}>Отмена</Button>
-                    <Button onClick={handleUpdateProfile} variant="contained">
-                        Сохранить
-                    </Button>
-                </DialogActions>
-            </Dialog>
+            {/* Telegram Card */}
+            <Card sx={{ mb: 3 }}>
+                <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                        <TelegramIcon color="primary" />
+                        <Typography variant="h6">
+                            Telegram
+                        </Typography>
+                    </Box>
 
-            <Dialog open={roleDialogOpen} onClose={() => setRoleDialogOpen(false)}>
-                <DialogTitle>Выберите роль</DialogTitle>
-                <DialogContent>
-                    <List>
-                        {profile.roles.map((role) => (
-                            <ListItem key={role} disablePadding>
-                                <ListItemButton
-                                    onClick={() => handleSwitchRole(role)}
-                                    selected={role === profile.current_role}
-                                >
-                                    <ListItemText
-                                        primary={roleLabels[role] || role}
-                                        secondary={role === profile.current_role ? 'Текущая роль' : ''}
-                                    />
-                                </ListItemButton>
-                            </ListItem>
+                    {profile.telegram_linked ? (
+                        <Box>
+                            <Alert severity="success" sx={{ mb: 2 }}>
+                                Telegram подключён
+                            </Alert>
+                            <Button
+                                variant="outlined"
+                                color="error"
+                                onClick={handleUnlinkTelegram}
+                            >
+                                Отвязать Telegram
+                            </Button>
+                        </Box>
+                    ) : (
+                        <Box>
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                                Подключите Telegram для получения уведомлений
+                            </Alert>
+                            <Button
+                                variant="contained"
+                                startIcon={<TelegramIcon />}
+                                onClick={handleGenerateTelegramCode}
+                            >
+                                Подключить Telegram
+                            </Button>
+                        </Box>
+                    )}
+                </CardContent>
+            </Card>
+
+            {/* Organizations Card */}
+            {profile.organizations && profile.organizations.length > 0 && (
+                <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                        <Typography variant="h6" gutterBottom>
+                            Мои организации
+                        </Typography>
+                        {profile.organizations.map((org) => (
+                            <Card key={org.id} variant="outlined" sx={{ mb: 2 }}>
+                                <CardContent>
+                                    <Typography variant="subtitle1">
+                                        {org.name}
+                                    </Typography>
+                                    {org.short_name && (
+                                        <Typography variant="body2" color="text.secondary">
+                                            {org.short_name}
+                                        </Typography>
+                                    )}
+                                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                                        {org.roles.map((role) => (
+                                            <Chip
+                                                key={role}
+                                                label={getRoleLabel(role)}
+                                                size="small"
+                                                color={getRoleColor(role)}
+                                                variant={role === org.current_role ? 'filled' : 'outlined'}
+                                            />
+                                        ))}
+                                    </Stack>
+                                    <Button
+                                        size="small"
+                                        sx={{ mt: 1 }}
+                                        onClick={() => navigate(`/organizations/${org.id}`)}
+                                    >
+                                        Управление
+                                    </Button>
+                                </CardContent>
+                            </Card>
                         ))}
-                    </List>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setRoleDialogOpen(false)}>Закрыть</Button>
-                </DialogActions>
-            </Dialog>
+                    </CardContent>
+                </Card>
+            )}
 
-            <Dialog open={telegramDialogOpen} onClose={() => setTelegramDialogOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Подключить Telegram</DialogTitle>
+            {/* Student Groups */}
+            {profile.groups && profile.groups.length > 0 && (
+                <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                        <Typography variant="h6" gutterBottom>
+                            Мои группы
+                        </Typography>
+                        {profile.groups.map((group) => (
+                            <Card key={group.id} variant="outlined" sx={{ mb: 1 }}>
+                                <CardContent>
+                                    <Typography variant="subtitle2">
+                                        {group.name}
+                                    </Typography>
+                                    <Typography variant="body2" color="text.secondary">
+                                        {group.specialty} • Курс {group.course}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                        {group.organization_name}
+                                    </Typography>
+                                </CardContent>
+                            </Card>
+                        ))}
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Teacher Subjects */}
+            {profile.subjects && profile.subjects.length > 0 && (
+                <Card sx={{ mb: 3 }}>
+                    <CardContent>
+                        <Typography variant="h6" gutterBottom>
+                            Мои предметы
+                        </Typography>
+                        {profile.subjects.map((subject) => (
+                            <Card key={subject.id} variant="outlined" sx={{ mb: 1 }}>
+                                <CardContent>
+                                    <Typography variant="subtitle2">
+                                        {subject.name}
+                                    </Typography>
+                                    {subject.code && (
+                                        <Typography variant="body2" color="text.secondary">
+                                            Код: {subject.code}
+                                        </Typography>
+                                    )}
+                                    <Typography variant="caption" color="text.secondary">
+                                        {subject.organization_name}
+                                    </Typography>
+                                </CardContent>
+                            </Card>
+                        ))}
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Action Buttons */}
+            <Card>
+                <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                        Действия
+                    </Typography>
+                    <Stack spacing={2}>
+                        <Button
+                            variant="contained"
+                            fullWidth
+                            onClick={() => setCreateOrgOpen(true)}
+                        >
+                            Создать организацию
+                        </Button>
+                        <Button
+                            variant="outlined"
+                            fullWidth
+                            onClick={() => navigate('/settings')}
+                        >
+                            Настройки
+                        </Button>
+                        <Divider />
+                        <Button
+                            variant="outlined"
+                            color="error"
+                            fullWidth
+                            onClick={() => {
+                                localStorage.clear();
+                                navigate('/login');
+                            }}
+                        >
+                            Выйти
+                        </Button>
+                    </Stack>
+                </CardContent>
+            </Card>
+
+            {/* Telegram Dialog */}
+            <Dialog
+                open={telegramDialogOpen}
+                onClose={() => setTelegramDialogOpen(false)}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>Подключение Telegram</DialogTitle>
                 <DialogContent>
                     <Alert severity="info" sx={{ mb: 2 }}>
-                        <Typography variant="body2" gutterBottom>
-                            Для подключения Telegram:
-                        </Typography>
-                        <ol style={{ margin: 0, paddingLeft: 20 }}>
-                            <li>Откройте бота @KipCalendarBot в Telegram</li>
-                            <li>Отправьте команду /start</li>
-                            <li>Скопируйте ваш User ID: <strong>{profile.id}</strong></li>
-                            <li>Отправьте боту команду: /link {profile.id}</li>
-                        </ol>
+                        Следуйте инструкциям для подключения
                     </Alert>
 
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                        Или введите ваш Telegram ID вручную:
+                    <Typography variant="body2" gutterBottom>
+                        1. Откройте Telegram и найдите бота: <strong>@KipCalendarBot</strong>
                     </Typography>
-                    <TextField
-                        fullWidth
-                        label="Telegram ID"
-                        value={telegramId}
-                        onChange={(e) => setTelegramId(e.target.value)}
-                        margin="normal"
-                        helperText="Узнать свой Telegram ID можно у бота @userinfobot"
-                    />
+                    <Typography variant="body2" gutterBottom>
+                        2. Отправьте команду <code>/start</code>
+                    </Typography>
+                    <Typography variant="body2" gutterBottom>
+                        3. Скопируйте код ниже:
+                    </Typography>
+
+                    <Box sx={{
+                        bgcolor: 'grey.100',
+                        p: 2,
+                        borderRadius: 1,
+                        my: 2,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                    }}>
+                        <Typography
+                            variant="h4"
+                            sx={{
+                                fontFamily: 'monospace',
+                                letterSpacing: 2
+                            }}
+                        >
+                            {telegramCode}
+                        </Typography>
+                        <IconButton
+                            onClick={() => copyToClipboard(telegramCode)}
+                            color={telegramCodeCopied ? 'success' : 'default'}
+                        >
+                            {telegramCodeCopied ? <CheckIcon /> : <CopyIcon />}
+                        </IconButton>
+                    </Box>
+
+                    <Typography variant="body2" gutterBottom>
+                        4. Отправьте боту команду: <code>/link {telegramCode}</code>
+                    </Typography>
+
+                    <Alert severity="warning" sx={{ mt: 2 }}>
+                        Код действителен 10 минут
+                    </Alert>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setTelegramDialogOpen(false)}>Отмена</Button>
-                    <Button onClick={handleLinkTelegram} variant="contained">
-                        Подключить
+                    <Button onClick={() => setTelegramDialogOpen(false)}>
+                        Закрыть
                     </Button>
                 </DialogActions>
             </Dialog>
 
+            {/* Create Organization Dialog */}
             <CreateOrganizationDialog
                 open={createOrgOpen}
                 onClose={() => setCreateOrgOpen(false)}
                 onSuccess={(orgId) => {
-                    setCreateOrgOpen(false);
-                    fetchProfile();
+                    setSnackbar({
+                        open: true,
+                        message: 'Организация создана!'
+                    });
                     navigate(`/organizations/${orgId}`);
                 }}
+            />
+
+            {/* Snackbar */}
+            <Snackbar
+                open={snackbar.open}
+                autoHideDuration={3000}
+                onClose={() => setSnackbar({ ...snackbar, open: false })}
+                message={snackbar.message}
             />
         </Container>
     );

@@ -182,367 +182,404 @@ def close_connection(exception):
 def init_db():
     with app.app_context():
         db = get_db()
-        db.executescript(
-            """
-        -- Users table (с UUID)
-        CREATE TABLE IF NOT EXISTS users (
-            id TEXT PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            email_verified BOOLEAN DEFAULT 0,
-            verification_code TEXT,
-            verification_expires INTEGER,
-            roles TEXT NOT NULL,
-            current_role TEXT NOT NULL,
-            logout_timestamp INTEGER,
-            first_name TEXT,
-            last_name TEXT,
-            middle_name TEXT,
-            telegram_id TEXT UNIQUE,
-            created_at INTEGER DEFAULT (strftime('%s', 'now'))
-        );
+        cur = db.cursor()
 
-        -- Organizations
-        CREATE TABLE IF NOT EXISTS organizations (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            short_name TEXT,
-            type TEXT NOT NULL DEFAULT 'education',
-            created_at INTEGER DEFAULT (strftime('%s', 'now')),
-            created_by TEXT,
-            FOREIGN KEY(created_by) REFERENCES users(id)
-        );
+        # Создание основных таблиц (используем executescript для блока CREATE TABLE)
+        db.executescript("""
+            -- Users table (с UUID)
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                email_verified BOOLEAN DEFAULT 0,
+                verification_code TEXT,
+                verification_expires INTEGER,
+                roles TEXT NOT NULL,
+                current_role TEXT NOT NULL,
+                logout_timestamp INTEGER,
+                first_name TEXT,
+                last_name TEXT,
+                middle_name TEXT,
+                telegram_id TEXT UNIQUE,
+                created_at INTEGER DEFAULT (strftime('%s', 'now'))
+            );
 
-        -- Organization members
-        CREATE TABLE IF NOT EXISTS organization_members (
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            roles TEXT NOT NULL,
-            current_role TEXT NOT NULL,
-            joined_at INTEGER DEFAULT (strftime('%s', 'now')),
-            profile_data TEXT,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            UNIQUE(organization_id, user_id)
-        );
+            -- Organizations
+            CREATE TABLE IF NOT EXISTS organizations (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                short_name TEXT,
+                type TEXT NOT NULL DEFAULT 'education',
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                created_by TEXT,
+                FOREIGN KEY(created_by) REFERENCES users(id)
+            );
 
-        -- Invitations
-        CREATE TABLE IF NOT EXISTS invitations (
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            token TEXT UNIQUE NOT NULL,
-            created_at INTEGER DEFAULT (strftime('%s', 'now')),
-            expires_at INTEGER NOT NULL,
-            max_uses INTEGER DEFAULT -1,
-            uses INTEGER DEFAULT 0,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-        );
+            -- Organization members
+            CREATE TABLE IF NOT EXISTS organization_members (
+                id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                roles TEXT NOT NULL,
+                current_role TEXT NOT NULL,
+                joined_at INTEGER DEFAULT (strftime('%s', 'now')),
+                profile_data TEXT,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                UNIQUE(organization_id, user_id)
+            );
 
-        -- Buildings
-        CREATE TABLE IF NOT EXISTS buildings (
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            address TEXT,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-        );
+            -- Invitations
+            CREATE TABLE IF NOT EXISTS invitations (
+                id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                expires_at INTEGER NOT NULL,
+                max_uses INTEGER DEFAULT -1,
+                uses INTEGER DEFAULT 0,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            );
 
-        -- Rooms
-        CREATE TABLE IF NOT EXISTS rooms (
-            id TEXT PRIMARY KEY,
-            building_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            max_groups INTEGER NOT NULL DEFAULT 1,
-            FOREIGN KEY(building_id) REFERENCES buildings(id) ON DELETE CASCADE
-        );
+            -- Buildings
+            CREATE TABLE IF NOT EXISTS buildings (
+                id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                address TEXT,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            );
 
-        -- Groups
-        CREATE TABLE IF NOT EXISTS groups (
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            specialty TEXT,
-            course INTEGER,
-            group_number INTEGER,
-            admission_year INTEGER,
-            type TEXT,
-            curator_id TEXT,
-            building_id TEXT,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
-            FOREIGN KEY(curator_id) REFERENCES users(id) ON DELETE SET NULL,
-            FOREIGN KEY(building_id) REFERENCES buildings(id) ON DELETE SET NULL
-        );
+            -- Rooms
+            CREATE TABLE IF NOT EXISTS rooms (
+                id TEXT PRIMARY KEY,
+                building_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                max_groups INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(building_id) REFERENCES buildings(id) ON DELETE CASCADE
+            );
 
-        -- User-Group relationship
-        CREATE TABLE IF NOT EXISTS user_groups (
-            user_id TEXT NOT NULL,
-            group_id TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
-            PRIMARY KEY(user_id, group_id)
-        );
+            -- Groups
+            CREATE TABLE IF NOT EXISTS groups (
+                id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                specialty TEXT,
+                course INTEGER,
+                group_number INTEGER,
+                admission_year INTEGER,
+                type TEXT,
+                curator_id TEXT,
+                building_id TEXT,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+                FOREIGN KEY(curator_id) REFERENCES users(id) ON DELETE SET NULL,
+                FOREIGN KEY(building_id) REFERENCES buildings(id) ON DELETE SET NULL
+            );
 
-        -- Subjects
-        CREATE TABLE IF NOT EXISTS subjects (
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            code TEXT,
-            description TEXT,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-        );
+            -- User-Group relationship
+            CREATE TABLE IF NOT EXISTS user_groups (
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                PRIMARY KEY(user_id, group_id)
+            );
 
-        -- Group-Subject relationship (with teacher and hours)
-        CREATE TABLE IF NOT EXISTS group_subjects (
-            id TEXT PRIMARY KEY,
-            group_id TEXT NOT NULL,
-            subject_id TEXT NOT NULL,
-            teacher_id TEXT,
-            total_hours INTEGER NOT NULL,
-            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
-            FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
-            FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE SET NULL,
-            UNIQUE(group_id, subject_id)
-        );
+            -- Subjects
+            CREATE TABLE IF NOT EXISTS subjects (
+                id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                code TEXT,
+                description TEXT,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            );
 
-        -- Schedule: Weekly lessons template
-        CREATE TABLE IF NOT EXISTS lessons (
-            id TEXT PRIMARY KEY,
-            group_id TEXT NOT NULL,
-            subject_id TEXT NOT NULL,
-            teacher_id TEXT NOT NULL,
-            room_id TEXT,
-            day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
-            start_time TEXT NOT NULL,
-            end_time TEXT NOT NULL,
-            lesson_type TEXT,
-            FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
-            FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
-            FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE SET NULL
-        );
+            -- Group-Subject relationship (with teacher and hours)
+            CREATE TABLE IF NOT EXISTS group_subjects (
+                id TEXT PRIMARY KEY,
+                group_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                teacher_id TEXT,
+                total_hours INTEGER NOT NULL,
+                FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+                FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE SET NULL,
+                UNIQUE(group_id, subject_id)
+            );
 
-        -- Actual lessons (specific date instances)
-        CREATE TABLE IF NOT EXISTS actual_lessons (
-            id TEXT PRIMARY KEY,
-            lesson_id TEXT NOT NULL,
-            date TEXT NOT NULL,
-            topic TEXT,
-            homework TEXT,
-            notes TEXT,
-            FOREIGN KEY(lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
-        );
+            -- Schedule: Weekly lessons template
+            CREATE TABLE IF NOT EXISTS lessons (
+                id TEXT PRIMARY KEY,
+                group_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                teacher_id TEXT NOT NULL,
+                room_id TEXT,
+                day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
+                start_time TEXT NOT NULL,
+                end_time TEXT NOT NULL,
+                lesson_type TEXT,
+                FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+                FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+                FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(room_id) REFERENCES rooms(id) ON DELETE SET NULL
+            );
 
-        -- Marks/Grades
-        CREATE TABLE IF NOT EXISTS marks (
-            id TEXT PRIMARY KEY,
-            actual_lesson_id TEXT NOT NULL,
-            student_id TEXT NOT NULL,
-            value TEXT,
-            comment TEXT,
-            created_at INTEGER DEFAULT (strftime('%s', 'now')),
-            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
-            FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+            -- Actual lessons (specific date instances)
+            CREATE TABLE IF NOT EXISTS actual_lessons (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                topic TEXT,
+                homework TEXT,
+                notes TEXT,
+                FOREIGN KEY(lesson_id) REFERENCES lessons(id) ON DELETE CASCADE
+            );
 
-        -- Attendance
-        CREATE TABLE IF NOT EXISTS attendance (
-            id TEXT PRIMARY KEY,
-            actual_lesson_id TEXT NOT NULL,
-            student_id TEXT NOT NULL,
-            status TEXT NOT NULL CHECK(status IN ('present', 'absent', 'late')),
-            note TEXT,
-            FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
-            FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+            -- Marks/Grades
+            CREATE TABLE IF NOT EXISTS marks (
+                id TEXT PRIMARY KEY,
+                actual_lesson_id TEXT NOT NULL,
+                student_id TEXT NOT NULL,
+                value TEXT,
+                comment TEXT,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
+                FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        -- Events (Calendar)
-        CREATE TABLE IF NOT EXISTS events (
-            id TEXT PRIMARY KEY,
-            owner_id TEXT NOT NULL,
-            organization_id TEXT,
-            title TEXT NOT NULL,
-            description TEXT,
-            date TEXT NOT NULL,
-            time TEXT NOT NULL,
-            end_date TEXT,
-            end_time TEXT,
-            event_type TEXT NOT NULL CHECK(event_type IN ('plan', 'task', 'lesson')),
-            content TEXT,
-            subtasks TEXT,
-            recurring_options TEXT,
-            privacy TEXT NOT NULL DEFAULT 'private',
-            password_hash TEXT,
-            expiration_days INTEGER,
-            version INTEGER DEFAULT 0,
-            created_at INTEGER DEFAULT (strftime('%s', 'now')),
-            FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE SET NULL
-        );
+            -- Attendance
+            CREATE TABLE IF NOT EXISTS attendance (
+                id TEXT PRIMARY KEY,
+                actual_lesson_id TEXT NOT NULL,
+                student_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('present', 'absent', 'late')),
+                note TEXT,
+                FOREIGN KEY(actual_lesson_id) REFERENCES actual_lessons(id) ON DELETE CASCADE,
+                FOREIGN KEY(student_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        -- Shared events
-        CREATE TABLE IF NOT EXISTS shared_events (
-            id TEXT PRIMARY KEY,
-            event_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            accepted BOOLEAN,
-            reason TEXT,
-            forbid_edit BOOLEAN DEFAULT 0,
-            allow_comments BOOLEAN DEFAULT 0,
-            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+            -- Events (Calendar)
+            CREATE TABLE IF NOT EXISTS events (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                organization_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                date TEXT NOT NULL,
+                time TEXT NOT NULL,
+                end_date TEXT,
+                end_time TEXT,
+                event_type TEXT NOT NULL CHECK(event_type IN ('plan', 'task', 'lesson')),
+                content TEXT,
+                subtasks TEXT,
+                recurring_options TEXT,
+                privacy TEXT NOT NULL DEFAULT 'private',
+                password_hash TEXT,
+                expiration_days INTEGER,
+                version INTEGER DEFAULT 0,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE SET NULL
+            );
 
-        -- Event history
-        CREATE TABLE IF NOT EXISTS event_history (
-            id TEXT PRIMARY KEY,
-            event_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            field TEXT,
-            old_value TEXT,
-            new_value TEXT,
-            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
-            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+            -- Shared events
+            CREATE TABLE IF NOT EXISTS shared_events (
+                id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                accepted BOOLEAN,
+                reason TEXT,
+                forbid_edit BOOLEAN DEFAULT 0,
+                allow_comments BOOLEAN DEFAULT 0,
+                FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        -- Comments on events
-        CREATE TABLE IF NOT EXISTS comments (
-            id TEXT PRIMARY KEY,
-            event_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
-            FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+            -- Event history
+            CREATE TABLE IF NOT EXISTS event_history (
+                id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                field TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        -- Chats
-        CREATE TABLE IF NOT EXISTS chats (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL CHECK(type IN ('direct', 'group')),
-            name TEXT,
-            created_at INTEGER DEFAULT (strftime('%s', 'now')),
-            organization_id TEXT,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE SET NULL
-        );
+            -- Comments on events
+            CREATE TABLE IF NOT EXISTS comments (
+                id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY(event_id) REFERENCES events(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        -- Chat members
-        CREATE TABLE IF NOT EXISTS chat_members (
-            chat_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            joined_at INTEGER DEFAULT (strftime('%s', 'now')),
-            last_read_at INTEGER,
-            FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-            PRIMARY KEY(chat_id, user_id)
-        );
+            -- Chats
+            CREATE TABLE IF NOT EXISTS chats (
+                id TEXT PRIMARY KEY,
+                type TEXT NOT NULL CHECK(type IN ('direct', 'group')),
+                name TEXT,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                organization_id TEXT,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE SET NULL
+            );
 
-        -- Messages
-        CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
-            chat_id TEXT NOT NULL,
-            sender_id TEXT NOT NULL,
-            subject TEXT,
-            content TEXT NOT NULL,
-            sent_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-            edited_at INTEGER,
-            reply_to TEXT,
-            FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
-            FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
-            FOREIGN KEY(reply_to) REFERENCES messages(id) ON DELETE SET NULL
-        );
+            -- Chat members
+            CREATE TABLE IF NOT EXISTS chat_members (
+                chat_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                joined_at INTEGER DEFAULT (strftime('%s', 'now')),
+                last_read_at INTEGER,
+                FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                PRIMARY KEY(chat_id, user_id)
+            );
 
-        -- Message attachments
-        CREATE TABLE IF NOT EXISTS message_attachments (
-            id TEXT PRIMARY KEY,
-            message_id TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            file_data BLOB NOT NULL,
-            file_size INTEGER NOT NULL,
-            mime_type TEXT,
-            uploaded_at INTEGER DEFAULT (strftime('%s', 'now')),
-            FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
-        );
+            -- Messages
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                sender_id TEXT NOT NULL,
+                subject TEXT,
+                content TEXT NOT NULL,
+                sent_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                edited_at INTEGER,
+                reply_to TEXT,
+                FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+                FOREIGN KEY(sender_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(reply_to) REFERENCES messages(id) ON DELETE SET NULL
+            );
 
-        -- Notifications
-        CREATE TABLE IF NOT EXISTS notifications (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            type TEXT NOT NULL,
-            content TEXT NOT NULL,
-            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
-            is_read BOOLEAN DEFAULT 0,
-            sent_to_telegram BOOLEAN DEFAULT 0,
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+            -- Message attachments
+            CREATE TABLE IF NOT EXISTS message_attachments (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                file_data BLOB NOT NULL,
+                file_size INTEGER NOT NULL,
+                mime_type TEXT,
+                uploaded_at INTEGER DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
 
-        -- Audit logs
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            action TEXT NOT NULL,
-            entity_id TEXT,
-            old_value TEXT,
-            new_value TEXT,
-            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
-            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-        );
+            -- Notifications
+            CREATE TABLE IF NOT EXISTS notifications (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+                is_read BOOLEAN DEFAULT 0,
+                sent_to_telegram BOOLEAN DEFAULT 0,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        -- Indexes for performance
-        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-        CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-        CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
-        CREATE INDEX IF NOT EXISTS idx_marks_student ON marks(student_id);
-        CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
-        CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
-        CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
-         -- Расширяем organizations
-        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS address TEXT;
-        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS phone TEXT;
-        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS website TEXT;
-        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS inn TEXT;
-        ALTER TABLE organizations ADD COLUMN IF NOT EXISTS rector_name TEXT;
-        
-        -- Академические годы (для планирования)
-        CREATE TABLE IF NOT EXISTS academic_years (
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            start_date TEXT NOT NULL,
-            end_date TEXT NOT NULL,
-            is_current BOOLEAN DEFAULT 0,
-            FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-        );
-        
-        -- Семестры внутри года
-        CREATE TABLE IF NOT EXISTS semesters (
-            id TEXT PRIMARY KEY,
-            academic_year_id TEXT NOT NULL,
-            name TEXT NOT NULL,
-            semester_number INTEGER NOT NULL,
-            start_date TEXT NOT NULL,
-            end_date TEXT NOT NULL,
-            FOREIGN KEY(academic_year_id) REFERENCES academic_years(id) ON DELETE CASCADE
-        );
-        
-        -- Индексы для быстрого поиска
-        CREATE INDEX IF NOT EXISTS idx_org_members_org ON organization_members(organization_id);
-        CREATE INDEX IF NOT EXISTS idx_groups_org ON groups(organization_id);
-        CREATE INDEX IF NOT EXISTS idx_subjects_org ON subjects(organization_id);
-        CREATE INDEX IF NOT EXISTS idx_lessons_group ON lessons(group_id);
-        CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
+            -- Audit logs
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                entity_id TEXT,
+                old_value TEXT,
+                new_value TEXT,
+                timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
 
-        ALTER TABLE users ADD COLUMN telegram_link_code TEXT;
-        ALTER TABLE users ADD COLUMN telegram_link_expires INTEGER;
-        """
-        )
+            -- Indexes for performance
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+            CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+            CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
+            CREATE INDEX IF NOT EXISTS idx_marks_student ON marks(student_id);
+            CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
+            CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
+            CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
+
+            -- Академические годы (для планирования)
+            CREATE TABLE IF NOT EXISTS academic_years (
+                id TEXT PRIMARY KEY,
+                organization_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                is_current BOOLEAN DEFAULT 0,
+                FOREIGN KEY(organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            );
+
+            -- Семестры внутри года
+            CREATE TABLE IF NOT EXISTS semesters (
+                id TEXT PRIMARY KEY,
+                academic_year_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                semester_number INTEGER NOT NULL,
+                start_date TEXT NOT NULL,
+                end_date TEXT NOT NULL,
+                FOREIGN KEY(academic_year_id) REFERENCES academic_years(id) ON DELETE CASCADE
+            );
+
+            -- Индексы для быстрого поиска
+            CREATE INDEX IF NOT EXISTS idx_org_members_org ON organization_members(organization_id);
+            CREATE INDEX IF NOT EXISTS idx_groups_org ON groups(organization_id);
+            CREATE INDEX IF NOT EXISTS idx_subjects_org ON subjects(organization_id);
+            CREATE INDEX IF NOT EXISTS idx_lessons_group ON lessons(group_id);
+            CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
+        """)
+
+        # Теперь добавляем столбцы через ALTER с try-except (без IF NOT EXISTS)
+        # Для organizations
+        try:
+            cur.execute("ALTER TABLE organizations ADD COLUMN address TEXT")
+        except sqlite3.OperationalError as e:
+            if 'duplicate column' not in str(e).lower():
+                raise
+
+        try:
+            cur.execute("ALTER TABLE organizations ADD COLUMN phone TEXT")
+        except sqlite3.OperationalError as e:
+            if 'duplicate column' not in str(e).lower():
+                raise
+
+        try:
+            cur.execute("ALTER TABLE organizations ADD COLUMN website TEXT")
+        except sqlite3.OperationalError as e:
+            if 'duplicate column' not in str(e).lower():
+                raise
+
+        try:
+            cur.execute("ALTER TABLE organizations ADD COLUMN inn TEXT")
+        except sqlite3.OperationalError as e:
+            if 'duplicate column' not in str(e).lower():
+                raise
+
+        try:
+            cur.execute("ALTER TABLE organizations ADD COLUMN rector_name TEXT")
+        except sqlite3.OperationalError as e:
+            if 'duplicate column' not in str(e).lower():
+                raise
+
+        # Для users - telegram_link_code и expires
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN telegram_link_code TEXT")
+        except sqlite3.OperationalError as e:
+            if 'duplicate column' not in str(e).lower():
+                raise
+
+        try:
+            cur.execute("ALTER TABLE users ADD COLUMN telegram_link_expires INTEGER")
+        except sqlite3.OperationalError as e:
+            if 'duplicate column' not in str(e).lower():
+                raise
+
         db.commit()
-    init_db()
-
+init_db()
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -1770,78 +1807,6 @@ def link_telegram():
     return jsonify({"message": "Linked successfully"})
 
 
-@app.route("/api/telegram/generate-code", methods=["POST", "OPTIONS"])
-def generate_telegram_code():
-    """Генерировать код для привязки Telegram"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    user_id = get_auth_user()
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    code = (
-        generate_verification_code()
-    )  # Используйте существующую функцию для 6-значного кода
-    expires = int(time.time()) + 600  # 10 минут
-
-    db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        "UPDATE users SET telegram_link_code = ?, telegram_link_expires = ? WHERE id = ?",
-        (code, expires, user_id),
-    )
-    db.commit()
-
-    log_audit(user_id, "TELEGRAM_CODE_GENERATED")
-
-    return jsonify({"code": code, "expires_in": 600})
-
-
-@app.route("/api/telegram/verify-code", methods=["POST", "OPTIONS"])
-def verify_telegram_code():
-    """Верифицировать код и привязать Telegram"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    data = request.json
-    code = data.get("code")
-    telegram_id = data.get("telegram_id")
-
-    if not code or not telegram_id:
-        return jsonify({"error": "code and telegram_id required"}), 400
-
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute(
-        "SELECT id FROM users WHERE telegram_link_code = ? AND telegram_link_expires > ?",
-        (code, int(time.time())),
-    )
-    user = cur.fetchone()
-
-    if not user:
-        return jsonify({"error": "Invalid or expired code"}), 400
-
-    user_id = user["id"]
-
-    # Проверяем, не занят ли telegram_id
-    cur.execute("SELECT id FROM users WHERE telegram_id = ?", (telegram_id,))
-    if cur.fetchone():
-        return jsonify({"error": "Telegram ID already linked"}), 400
-
-    # Привязываем
-    cur.execute(
-        "UPDATE users SET telegram_id = ?, telegram_link_code = NULL, telegram_link_expires = NULL WHERE id = ?",
-        (telegram_id, user_id),
-    )
-    db.commit()
-
-    log_audit(user_id, "TELEGRAM_LINKED")
-
-    return jsonify({"message": "Linked successfully"})
-
-
 @app.route("/api/telegram/linked-users", methods=["GET", "OPTIONS"])
 def get_linked_users():
     """Получить список связанных пользователей для бота"""
@@ -1886,31 +1851,6 @@ def unlink_telegram():
     log_audit(user["id"], "TELEGRAM_UNLINKED")
 
     return jsonify({"message": "Unlinked successfully"})
-
-
-@app.route("/api/telegram/status", methods=["GET", "OPTIONS"])
-def telegram_status():
-    """Проверить статус привязки"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    telegram_id = request.args.get("telegram_id")
-
-    if not telegram_id:
-        return jsonify({"error": "telegram_id required"}), 400
-
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute("SELECT id, username FROM users WHERE telegram_id = ?", (telegram_id,))
-    user = cur.fetchone()
-
-    if not user:
-        return jsonify({"linked": False})
-
-    return jsonify(
-        {"linked": True, "user_id": user["id"], "username": user["username"]}
-    )
 
 
 @app.route("/api/organizations/<org_id>/members", methods=["GET", "OPTIONS"])
@@ -5569,7 +5509,7 @@ def manage_organization_profile(org_id):
         return jsonify({"message": "Organization updated"})
 
 
-# ========== УДАЛЕНИЕ ПРОСРОЧЕННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
+""" ========== УДАЛЕНИЕ ПРОСРОЧЕННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
 def check_expired_users():
     with app.app_context():
         db = get_db()
@@ -5595,8 +5535,282 @@ def check_expired_users():
             cur.execute("DELETE FROM users WHERE id = ?", (row["id"],))
         db.commit()
     Timer(86400, check_expired_users).start()
+"""
+
+# ============ TELEGRAM BOT SUPPORT ENDPOINTS (ENHANCED) ============
+
+
+@app.route("/api/telegram/generate-code", methods=["POST", "OPTIONS"])
+def generate_telegram_code():
+    """Генерация кода для привязки Telegram"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Генерируем 6-значный код
+    code = "".join([str(secrets.randbelow(10)) for _ in range(6)])
+    expires = int(time.time()) + 600  # 10 минут
+
+    cur.execute(
+        """UPDATE users 
+           SET telegram_link_code = ?, telegram_link_expires = ? 
+           WHERE id = ?""",
+        (code, expires, user_id),
+    )
+    db.commit()
+
+    return jsonify({"code": code, "expires_in": 600})
+
+
+@app.route("/api/telegram/verify-code", methods=["POST", "OPTIONS"])
+def verify_telegram_code():
+    """Верификация кода и привязка Telegram"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    data = request.json
+    code = data.get("code")
+    telegram_id = data.get("telegram_id")
+
+    if not all([code, telegram_id]):
+        return jsonify({"error": "Code and telegram_id required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Проверяем код
+    cur.execute(
+        """SELECT id, username FROM users 
+           WHERE telegram_link_code = ? 
+           AND telegram_link_expires > ?""",
+        (code, int(time.time())),
+    )
+    user = cur.fetchone()
+
+    if not user:
+        return jsonify({"error": "Invalid or expired code"}), 400
+
+    # Проверяем, не занят ли этот telegram_id
+    cur.execute(
+        "SELECT id FROM users WHERE telegram_id = ? AND id != ?",
+        (telegram_id, user["id"]),
+    )
+    if cur.fetchone():
+        return jsonify({"error": "Telegram already linked to another account"}), 400
+
+    # Привязываем
+    cur.execute(
+        """UPDATE users 
+           SET telegram_id = ?, telegram_link_code = NULL, telegram_link_expires = NULL 
+           WHERE id = ?""",
+        (telegram_id, user["id"]),
+    )
+    db.commit()
+
+    log_audit(user["id"], "TELEGRAM_LINKED", user["id"])
+
+    return jsonify(
+        {
+            "message": "Telegram linked successfully",
+            "user_id": user["id"],
+            "username": user["username"],
+        }
+    )
+
+
+@app.route("/api/telegram/status", methods=["GET", "OPTIONS"])
+def telegram_status():
+    """Проверка статуса привязки по telegram_id"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    telegram_id = request.args.get("telegram_id")
+
+    if not telegram_id:
+        return jsonify({"error": "telegram_id required"}), 400
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("SELECT id, username FROM users WHERE telegram_id = ?", (telegram_id,))
+    user = cur.fetchone()
+
+    if user:
+        return jsonify(
+            {"linked": True, "user_id": user["id"], "username": user["username"]}
+        )
+    else:
+        return jsonify({"linked": False})
+
+
+@app.route("/api/telegram/linked-users", methods=["GET", "OPTIONS"])
+def get_linked_telegram_users():
+    """Получить всех пользователей с привязанным Telegram (для бота)"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        "SELECT id as user_id, telegram_id FROM users WHERE telegram_id IS NOT NULL"
+    )
+    users = [dict(row) for row in cur.fetchall()]
+
+    return jsonify(users)
+
+
+# ============ HOMEWORK ENDPOINT ============
+
+@app.route("/api/homework/student/<student_id>", methods=["GET", "OPTIONS"])
+def get_student_homework(student_id):
+    """Получить домашние задания студента"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    from_date = request.args.get("from_date", datetime.datetime.now().strftime("%Y-%m-%d"))
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute(
+        """SELECT al.homework, al.date, s.name as subject_name, al.topic
+           FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           JOIN user_groups ug ON l.group_id = ug.group_id
+           WHERE ug.user_id = ? 
+           AND al.homework IS NOT NULL 
+           AND al.homework != ''
+           AND al.date >= ?
+           ORDER BY al.date ASC""",
+        (student_id, from_date)
+    )
+
+    homework = [dict(row) for row in cur.fetchall()]
+    return jsonify({"homework": homework})
+
+
+# ============ SOCKET.IO HANDLERS FOR MESSENGER ============
+
+@socketio.on('connect')
+def handle_connect():
+    """Обработка подключения клиента"""
+    print(f'Client connected: {request.sid}')
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Обработка отключения клиента"""
+    print(f'Client disconnected: {request.sid}')
+
+
+@socketio.on('join_chat')
+def handle_join_chat(data):
+    """Присоединение к комнате чата"""
+    chat_id = data.get('chat_id')
+    if chat_id:
+        join_room(chat_id)
+        print(f'User joined chat: {chat_id}')
+
+
+@socketio.on('leave_chat')
+def handle_leave_chat(data):
+    """Выход из комнаты чата"""
+    chat_id = data.get('chat_id')
+    if chat_id:
+        leave_room(chat_id)
+        print(f'User left chat: {chat_id}')
+
+
+@socketio.on('typing')
+def handle_typing(data):
+    """Уведомление о наборе текста"""
+    chat_id = data.get('chat_id')
+    username = data.get('username')
+    if chat_id:
+        emit('user_typing', {'username': username}, room=chat_id, include_self=False)
+
+
+@socketio.on('stop_typing')
+def handle_stop_typing(data):
+    """Остановка набора текста"""
+    chat_id = data.get('chat_id')
+    if chat_id:
+        emit('user_stop_typing', {}, room=chat_id, include_self=False)
+
+
+# ============ ENHANCED CHAT ENDPOINTS ============
+
+@app.route("/api/chats/<chat_id>/mark-read", methods=["POST", "OPTIONS"])
+def mark_chat_as_read(chat_id):
+    """Отметить все сообщения в чате как прочитанные"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Обновляем last_read_at
+    cur.execute(
+        """UPDATE chat_members 
+           SET last_read_at = ? 
+           WHERE chat_id = ? AND user_id = ?""",
+        (int(time.time()), chat_id, user_id)
+    )
+    db.commit()
+
+    return jsonify({"message": "Marked as read"})
+
+
+@app.route("/api/chats/<chat_id>/unread-count", methods=["GET", "OPTIONS"])
+def get_unread_count(chat_id):
+    """Получить количество непрочитанных сообщений"""
+    if request.method == "OPTIONS":
+        return "", 200
+
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    db = get_db()
+    cur = db.cursor()
+
+    # Получаем last_read_at пользователя
+    cur.execute(
+        """SELECT last_read_at FROM chat_members 
+           WHERE chat_id = ? AND user_id = ?""",
+        (chat_id, user_id)
+    )
+    member = cur.fetchone()
+    
+    last_read = member["last_read_at"] if member and member["last_read_at"] else 0
+
+    # Считаем непрочитанные
+    cur.execute(
+        """SELECT COUNT(*) as count FROM messages 
+           WHERE chat_id = ? AND sender_id != ? AND sent_at > ?""",
+        (chat_id, user_id, last_read)
+    )
+    
+    count = cur.fetchone()["count"]
+    return jsonify({"unread_count": count})
 
 # Запускаем проверку просроченных пользователей при старте
-check_expired_users()
+# check_expired_users()
 if __name__ == "__main__":
     socketio.run(app, port=5000, debug=True, host="0.0.0.0")

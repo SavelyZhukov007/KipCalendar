@@ -32,10 +32,28 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+interface OrganizationStats {
+  members: number;
+  groups: number;
+  subjects: number;
+}
+
+interface Organization {
+  id: string;
+  name: string;
+  short_name?: string;
+  address?: string;
+  phone?: string;
+  website?: string;
+  inn?: string;
+  rector_name?: string;
+  stats: OrganizationStats;
+}
+
 const OrganizationManagement: React.FC = () => {
   const { orgId } = useParams<{ orgId: string }>();
   const [tabValue, setTabValue] = useState(0);
-  const [organization, setOrganization] = useState<any>(null);
+  const [organization, setOrganization] = useState<Organization | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -43,20 +61,28 @@ const OrganizationManagement: React.FC = () => {
   }, [orgId]);
 
   const fetchOrganization = async () => {
-    const token = localStorage.getItem('token');
-    const response = await fetch(
-      `${API_BASE_URL}/api/organizations/${orgId}/profile`,
-      {
-        headers: { 'Authorization': token || '' }
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(
+        `${API_BASE_URL}/api/organizations/${orgId}/profile`,
+        {
+          headers: { 'Authorization': token || '' }
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setOrganization(data);
       }
-    );
-    const data = await response.json();
-    setOrganization(data);
-    setLoading(false);
+    } catch (err) {
+      console.error('Failed to fetch organization:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  if (loading) return <div>Загрузка...</div>;
-  if (!organization) return <div>Организация не найдена</div>;
+  if (loading) return <Container maxWidth="lg" sx={{ mt: 4 }}><Typography>Загрузка...</Typography></Container>;
+  if (!organization) return <Container maxWidth="lg" sx={{ mt: 4 }}><Typography>Организация не найдена</Typography></Container>;
 
   return (
     <Container maxWidth="lg" sx={{ mt: 4 }}>
@@ -106,47 +132,37 @@ const OrganizationManagement: React.FC = () => {
       </Tabs>
 
       <TabPanel value={tabValue} index={0}>
-        {/* Информация об организации */}
-        <Typography>Адрес: {organization.address}</Typography>
-        <Typography>Телефон: {organization.phone}</Typography>
-        <Typography>Сайт: {organization.website}</Typography>
-        {/* Кнопка редактирования для админов */}
+        <Typography>Адрес: {organization.address || 'Не указан'}</Typography>
+        <Typography>Телефон: {organization.phone || 'Не указан'}</Typography>
+        <Typography>Сайт: {organization.website || 'Не указан'}</Typography>
+        <Typography>Директор/Ректор: {organization.rector_name || 'Не указан'}</Typography>
       </TabPanel>
 
       <TabPanel value={tabValue} index={1}>
-        {/* Компонент управления зданиями и кабинетами */}
         <Button variant="contained">Добавить здание</Button>
-        {/* Список зданий с кабинетами */}
       </TabPanel>
 
       <TabPanel value={tabValue} index={2}>
-        {/* Компонент управления группами */}
         <Button variant="contained">Создать группу</Button>
-        {/* Список групп */}
       </TabPanel>
 
       <TabPanel value={tabValue} index={3}>
-        {/* Компонент управления предметами */}
         <Button variant="contained">Добавить предмет</Button>
-        {/* Список предметов */}
       </TabPanel>
 
       <TabPanel value={tabValue} index={4}>
-        {/* Редактор расписания */}
         <Button variant="contained">Загрузить расписание</Button>
-        {/* Таблица расписания */}
       </TabPanel>
 
       <TabPanel value={tabValue} index={5}>
-        {/* Список участников с ролями */}
+        <Typography>Список участников</Typography>
       </TabPanel>
 
       <TabPanel value={tabValue} index={6}>
-        {/* Генерация invite-ссылок */}
         <Typography variant="h6">Пригласительные ссылки</Typography>
-        <Button variant="contained">Создать приглашение для администратора</Button>
-        <Button variant="contained">Создать приглашение для преподавателя</Button>
-        <Button variant="contained">Создать приглашение для студента</Button>
+        <Button variant="contained" sx={{ mt: 2 }}>Создать приглашение для администратора</Button>
+        <Button variant="contained" sx={{ mt: 2, ml: 2 }}>Создать приглашение для преподавателя</Button>
+        <Button variant="contained" sx={{ mt: 2, ml: 2 }}>Создать приглашение для студента</Button>
       </TabPanel>
     </Container>
   );

@@ -11,7 +11,6 @@ import {
     Step,
     StepLabel,
     Box,
-    Typography,
     Alert
 } from '@mui/material';
 import { API_BASE_URL } from '../config';
@@ -24,7 +23,6 @@ interface CreateOrganizationDialogProps {
 
 const orgTypes = [
     { value: 'education', label: 'Образовательное учреждение: Школа/СПО/Университет' },
-    // Можно добавить другие типы в будущем
 ];
 
 const steps = ['Тип организации', 'Основная информация', 'Контакты'];
@@ -49,7 +47,6 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
     const [loading, setLoading] = useState(false);
 
     const handleNext = () => {
-        // Валидация на каждом шаге
         if (activeStep === 1 && !formData.name) {
             setError('Введите название организации');
             return;
@@ -88,7 +85,6 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
             if (response.ok) {
                 onSuccess(data.organization_id);
                 onClose();
-                // Сбрасываем форму
                 setFormData({
                     type: 'education',
                     name: '',
