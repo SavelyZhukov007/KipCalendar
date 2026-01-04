@@ -15,7 +15,10 @@
     padding: 0;
     background: linear-gradient(135deg, #f0f2f5 0%, #e4e6e9 100%);
     min-height: 100vh;
-    /* overflow-x: hidden; */
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 /* ========== Хедер (Нео-стиль) ========== */
@@ -318,7 +321,8 @@
     gap: 32px;
     padding: 32px;
     background: transparent;
-    min-height: calc(100vh - 72px);
+    flex: 1;
+    overflow-y: auto;
 }
 
 .selected-day-events {

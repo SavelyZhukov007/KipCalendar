@@ -36,8 +36,9 @@ body {
   font-family: 'Google Sans', 'Roboto', sans-serif;
   background: var(--gc-bg);
   color: var(--gc-text-primary);
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .calendar-app {

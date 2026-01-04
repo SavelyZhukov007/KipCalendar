@@ -1713,7 +1713,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Main Content */}
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 24, flex: 1, overflowY: 'auto' }}>
         {/* Month View */}
         <CSSTransition
           in={view === 'month'}

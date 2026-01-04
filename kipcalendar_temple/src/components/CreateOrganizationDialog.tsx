@@ -1,19 +1,18 @@
 import React, { useState } from 'react';
 import {
-    Dialog,
-    DialogTitle,
-    DialogContent,
-    DialogActions,
+    Modal,
+    Steps,
+    Form,
+    Input,
+    Select,
     Button,
-    TextField,
-    MenuItem,
-    Stepper,
-    Step,
-    StepLabel,
-    Box,
-    Alert
-} from '@mui/material';
+    Alert,
+    Space
+} from 'antd';
 import { API_BASE_URL } from '../config';
+
+const { Option } = Select;
+const { TextArea } = Input;
 
 interface CreateOrganizationDialogProps {
     open: boolean;
@@ -32,28 +31,21 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
     onClose,
     onSuccess
 }) => {
+    const [form] = Form.useForm();
     const [activeStep, setActiveStep] = useState(0);
-    const [formData, setFormData] = useState({
-        type: 'education',
-        name: '',
-        short_name: '',
-        address: '',
-        phone: '',
-        website: '',
-        inn: '',
-        rector_name: ''
-    });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const handleNext = () => {
-        if (activeStep === 1 && !formData.name) {
-            setError('Введите название организации');
-            return;
+    const handleNext = async () => {
+        try {
+            if (activeStep === 1) {
+                await form.validateFields(['name']);
+            }
+            setActiveStep((prev) => prev + 1);
+            setError('');
+        } catch (err) {
+            setError('Заполните все обязательные поля');
         }
-
-        setActiveStep((prev) => prev + 1);
-        setError('');
     };
 
     const handleBack = () => {
@@ -61,15 +53,12 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
         setError('');
     };
 
-    const handleChange = (field: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
-        setFormData({ ...formData, [field]: e.target.value });
-    };
-
     const handleSubmit = async () => {
-        setLoading(true);
-        setError('');
-
         try {
+            const values = await form.validateFields();
+            setLoading(true);
+            setError('');
+
             const token = localStorage.getItem('token');
             const response = await fetch(`${API_BASE_URL}/api/organizations/create`, {
                 method: 'POST',
@@ -77,7 +66,7 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
                     'Content-Type': 'application/json',
                     'Authorization': token || ''
                 },
-                body: JSON.stringify(formData)
+                body: JSON.stringify(values)
             });
 
             const data = await response.json();
@@ -85,22 +74,17 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
             if (response.ok) {
                 onSuccess(data.organization_id);
                 onClose();
-                setFormData({
-                    type: 'education',
-                    name: '',
-                    short_name: '',
-                    address: '',
-                    phone: '',
-                    website: '',
-                    inn: '',
-                    rector_name: ''
-                });
+                form.resetFields();
                 setActiveStep(0);
             } else {
                 setError(data.error || 'Ошибка создания организации');
             }
-        } catch (err) {
-            setError('Ошибка сети');
+        } catch (err: any) {
+            if (err.errorFields) {
+                setError('Заполните все обязательные поля');
+            } else {
+                setError('Ошибка сети');
+            }
         } finally {
             setLoading(false);
         }
@@ -110,84 +94,75 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
         switch (step) {
             case 0:
                 return (
-                    <TextField
-                        select
-                        fullWidth
+                    <Form.Item
+                        name="type"
                         label="Тип организации"
-                        value={formData.type}
-                        onChange={handleChange('type')}
-                        margin="normal"
+                        initialValue="education"
+                        rules={[{ required: true, message: 'Выберите тип организации' }]}
                     >
-                        {orgTypes.map((option) => (
-                            <MenuItem key={option.value} value={option.value}>
-                                {option.label}
-                            </MenuItem>
-                        ))}
-                    </TextField>
+                        <Select size="large">
+                            {orgTypes.map((option) => (
+                                <Option key={option.value} value={option.value}>
+                                    {option.label}
+                                </Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
                 );
 
             case 1:
                 return (
-                    <Box>
-                        <TextField
-                            fullWidth
-                            label="Полное название организации *"
-                            value={formData.name}
-                            onChange={handleChange('name')}
-                            margin="normal"
-                            required
-                        />
-                        <TextField
-                            fullWidth
+                    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                        <Form.Item
+                            name="name"
+                            label="Полное название организации"
+                            rules={[{ required: true, message: 'Введите название организации' }]}
+                        >
+                            <Input size="large" placeholder="Название организации" />
+                        </Form.Item>
+                        <Form.Item
+                            name="short_name"
                             label="Сокращённое название (опционально)"
-                            value={formData.short_name}
-                            onChange={handleChange('short_name')}
-                            margin="normal"
-                        />
-                        <TextField
-                            fullWidth
+                        >
+                            <Input size="large" placeholder="Сокращённое название" />
+                        </Form.Item>
+                        <Form.Item
+                            name="rector_name"
                             label="ФИО Директора/Ректора"
-                            value={formData.rector_name}
-                            onChange={handleChange('rector_name')}
-                            margin="normal"
-                        />
-                    </Box>
+                        >
+                            <Input size="large" placeholder="ФИО" />
+                        </Form.Item>
+                    </Space>
                 );
 
             case 2:
                 return (
-                    <Box>
-                        <TextField
-                            fullWidth
+                    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                        <Form.Item
+                            name="address"
                             label="Адрес"
-                            value={formData.address}
-                            onChange={handleChange('address')}
-                            margin="normal"
-                            multiline
-                            rows={2}
-                        />
-                        <TextField
-                            fullWidth
+                        >
+                            <TextArea rows={2} placeholder="Адрес организации" />
+                        </Form.Item>
+                        <Form.Item
+                            name="phone"
                             label="Телефон"
-                            value={formData.phone}
-                            onChange={handleChange('phone')}
-                            margin="normal"
-                        />
-                        <TextField
-                            fullWidth
+                        >
+                            <Input size="large" placeholder="Телефон" />
+                        </Form.Item>
+                        <Form.Item
+                            name="website"
                             label="Веб-сайт"
-                            value={formData.website}
-                            onChange={handleChange('website')}
-                            margin="normal"
-                        />
-                        <TextField
-                            fullWidth
+                        >
+                            <Input size="large" placeholder="https://example.com" />
+                        </Form.Item>
+                        <Form.Item
+                            name="inn"
                             label="ИНН"
-                            value={formData.inn}
-                            onChange={handleChange('inn')}
-                            margin="normal"
-                        />
-                    </Box>
+                        >
+                            <Input size="large" placeholder="ИНН" />
+                        </Form.Item>
+                    </Space>
                 );
 
             default:
@@ -196,73 +171,62 @@ const CreateOrganizationDialog: React.FC<CreateOrganizationDialogProps> = ({
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-            <DialogTitle>Создание организации</DialogTitle>
-            <DialogContent>
-                <Stepper activeStep={activeStep} sx={{ pt: 3, pb: 5 }}>
-                    {steps.map((label) => (
-                        <Step key={label}>
-                            <StepLabel>{label}</StepLabel>
-                        </Step>
-                    ))}
-                </Stepper>
+        <Modal
+            title="Создание организации"
+            open={open}
+            onCancel={onClose}
+            width={600}
+            footer={null}
+            destroyOnClose
+        >
+            <Steps
+                current={activeStep}
+                items={steps.map(label => ({ title: label }))}
+                style={{ marginBottom: 24, marginTop: 16 }}
+            />
 
-                {error && (
-                    <Alert severity="error" sx={{ mb: 2 }}>
-                        {error}
-                    </Alert>
-                )}
+            {error && (
+                <Alert
+                    message={error}
+                    type="error"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    closable
+                    onClose={() => setError('')}
+                />
+            )}
 
+            <Form
+                form={form}
+                layout="vertical"
+                initialValues={{ type: 'education' }}
+            >
                 {renderStepContent(activeStep)}
-            </DialogContent>
-            <DialogActions>
+            </Form>
+
+            <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between' }}>
                 <Button onClick={onClose}>Отмена</Button>
-                {activeStep > 0 && (
-                    <Button onClick={handleBack}>Назад</Button>
-                )}
-                {activeStep < steps.length - 1 ? (
-                    <Button onClick={handleNext} variant="contained">
-                        Далее
-                    </Button>
-                ) : (
-                    <Button
-                        onClick={handleSubmit}
-                        variant="contained"
-                        disabled={loading}
-                    >
-                        {loading ? 'Создание...' : 'Создать организацию'}
-                    </Button>
-                )}
-            </DialogActions>
-        </Dialog>
+                <Space>
+                    {activeStep > 0 && (
+                        <Button onClick={handleBack}>Назад</Button>
+                    )}
+                    {activeStep < steps.length - 1 ? (
+                        <Button type="primary" onClick={handleNext}>
+                            Далее
+                        </Button>
+                    ) : (
+                        <Button
+                            type="primary"
+                            onClick={handleSubmit}
+                            loading={loading}
+                        >
+                            Создать организацию
+                        </Button>
+                    )}
+                </Space>
+            </div>
+        </Modal>
     );
 };
-{/*Внедрить!
-// CreateOrganizationDialog.tsx - Change to request instead of create
-// Add fields: message, attachments
 
-const [requestMessage, setRequestMessage] = useState('');
-const [attachments, setAttachments] = useState<File[]>([]);
-
-// In step content, add in last step:
-<TextField
-  fullWidth
-  label="Сообщение для администратора"
-  value={requestMessage}
-  onChange={(e) => setRequestMessage(e.target.value)}
-  multiline
-  rows={4}
-  margin="normal"
-/>
-<Input type="file" multiple onChange={(e) => setAttachments(Array.from(e.target.files || []))} />
-
-// In handleSubmit:
-const formData = new FormData();
-Object.entries(formDataState).forEach(([k, v]) => formData.append(k, v));
-formData.append('message', requestMessage);
-attachments.forEach((file, i) => formData.append(`file_${i}`, file));
-
-// Fetch to /api/organizations/request, method POST, body: formData
-// On success: Alert 'Request sent'
-*/}
 export default CreateOrganizationDialog;
