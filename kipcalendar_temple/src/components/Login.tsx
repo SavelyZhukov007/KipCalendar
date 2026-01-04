@@ -1,12 +1,9 @@
 // src/components/Login.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Button, Input, Typography, Spin, message, Card, Space } from 'antd';
-import { UserOutlined, LockOutlined } from '@ant-design/icons';
+import { Button, TextField, Typography, CircularProgress, Fade } from '@mui/material';
 import '../styles/DemoStyles.css';
-import logo from "../assets_logo/kip1.png";
-
-const { Title, Text } = Typography;
+import logo from "../assets_logo/kip1.png"
 
 const Login: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -22,6 +19,7 @@ const Login: React.FC = () => {
   ));
 
   useEffect(() => {
+    // Проверяем наличие сохраненных данных для автозаполнения
     const savedUsername = localStorage.getItem('savedUsername');
     const savedPassword = localStorage.getItem('savedPassword');
     if (savedUsername) {
@@ -50,90 +48,82 @@ const Login: React.FC = () => {
         const { token } = await res.json();
         localStorage.setItem('token', token);
         setFadeOut(true);
-        message.success('Вход выполнен успешно');
-        setTimeout(() => navigate('/dashboard'), 500);
       } else if (res.status === 403) {
         const error = await res.json();
-        message.warning('Email не подтвержден. Перенаправляем...');
+        alert('Email не подтвержден. Перенаправляем...');
         navigate('/verification', { state: { email: error.email } });
         setLoading(false);
       } else {
         const error = await res.json();
-        message.error(error.error || 'Ошибка входа');
+        alert(error.error || 'Ошибка входа');
         setLoading(false);
       }
     } catch (error) {
-      message.error('Ошибка соединения с сервером');
+      /*      alert('Ошибка соединения с бэкендом');*/
       setLoading(false);
     }
   };
 
+  const handleAnimationEnd = () => {
+    if (fadeOut) {
+      navigate('/dashboard');
+    }
+  };
+
   return (
-    <div id="container">
-      <div id="left">
-        <h1>{chars}</h1>
-        <img src={logo} alt="Kip Logo" />
-      </div>
-      <div id="right">
-        <Card 
-          style={{ 
-            width: '100%', 
-            maxWidth: 400, 
-            background: 'rgba(30, 30, 30, 0.95)',
-            border: '1px solid rgba(255, 255, 255, 0.1)'
-          }}
-        >
+    <Fade in={!fadeOut} timeout={500} onExited={handleAnimationEnd}>
+      <div id="container">
+        <div id="left">
+          <h1>{chars}</h1>
+          <img src={logo} alt="Kip Logo" />
+
+        </div>
+        <div id="right">
           <div className="form-container">
-            <Title level={2} style={{ color: '#fff', textAlign: 'center', marginBottom: 24 }}>
+            <Typography variant="h4" gutterBottom sx={{ color: 'var(--text-light)', textAlign: 'center' }}>
               Вход
-            </Title>
-            <Space direction="vertical" size="large" style={{ width: '100%' }}>
-              <Input
-                size="large"
-                prefix={<UserOutlined />}
-                placeholder="Логин"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                style={{ background: 'rgba(255, 255, 255, 0.1)', borderColor: 'rgba(255, 255, 255, 0.3)', color: '#fff' }}
-                onPressEnter={handleLogin}
-              />
-              <Input.Password
-                size="large"
-                prefix={<LockOutlined />}
-                placeholder="Пароль"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{ background: 'rgba(255, 255, 255, 0.1)', borderColor: 'rgba(255, 255, 255, 0.3)', color: '#fff' }}
-                onPressEnter={handleLogin}
-              />
-              <Button
-                type="primary"
-                size="large"
-                block
-                loading={loading}
-                onClick={handleLogin}
-                style={{ height: 42 }}
-              >
-                Войти
-              </Button>
-              <div className="form-footer">
-                <div className="link-row">
-                  <Text style={{ color: 'rgba(255, 255, 255, 0.7)' }}>Нет аккаунта?</Text>
-                  <Link to="/register" className="text-link">Зарегистрироваться</Link>
-                </div>
-                <Button 
-                  type="link" 
-                  onClick={() => navigate('/forgot-password')}
-                  style={{ color: 'rgba(255, 255, 255, 0.7)', padding: 0 }}
-                >
-                  Забыл пароль
-                </Button>
+            </Typography>
+            <TextField
+              label="Логин"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              fullWidth
+              margin="normal"
+              InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+            />
+            <TextField
+              label="Пароль"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              fullWidth
+              margin="normal"
+              InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+            />
+            <Button
+              onClick={handleLogin}
+              variant="contained"
+              fullWidth
+              disabled={loading}
+              className="submit-btn"
+              sx={{ mt: 2 }}
+            >
+              Войти
+            </Button>
+            {loading && <CircularProgress sx={{ mt: 2, display: 'block', mx: 'auto', color: 'var(--text-light)' }} />}
+            <div className="form-footer">
+              <div className="link-row">
+                <span>Нет аккаунта?</span>
+                <Link to="/register" className="text-link">Зарегистрироваться</Link>
               </div>
-            </Space>
+              <button className="ghost-button" onClick={() => navigate('/forgot-password')}>
+                Забыл пароль
+              </button>
+            </div>
           </div>
-        </Card>
+        </div>
       </div>
-    </div>
+    </Fade>
   );
 };
 
