@@ -20,6 +20,7 @@ import Kipswift from "./components/Kipswift";
 import Verification from './components/Verification';
 import OrganizationManagement from './components/OrganizationManagement';
 import Settings from './components/Settings';
+import Dashboardtest from './components/Dashboardtest';
 import './App.css';
 
 const theme = createTheme();
@@ -72,6 +73,7 @@ function App() {
             <Route path="/kipswift" element={<PrivateRoute><Kipswift /></PrivateRoute>} />
             <Route path="/verification" element={<Verification />} />
             <Route path="/organizations/:orgId" element={<OrganizationManagement />} /> {/* Управление организацией */}
+            <Route path="/dashboardtest" element={<PrivateRoute><Dashboardtest /></PrivateRoute>} /> {/* Календарь */}
             <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
             {/* <Route path="/kipswift" element={<Kipswift />} /> */}
           </Routes>

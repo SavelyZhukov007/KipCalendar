@@ -1656,7 +1656,7 @@ const Dashboard: React.FC = () => {
   ];
 
   return (
-    <div className="dashboard-container">
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <div className="header">
         <Row align="middle" justify="space-between" style={{ width: '100%' }}>

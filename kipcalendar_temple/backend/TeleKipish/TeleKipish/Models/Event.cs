@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace TeleKipish.Models
 {
-    internal class v
+    internal class Event
     {
     }
 }

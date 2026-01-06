@@ -1,29 +1,24 @@
 import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { Input, Button, Typography, message, Card, Space } from 'antd';
+import { Input, Button, Typography, message, Card } from 'antd';
 import { SafetyOutlined } from '@ant-design/icons';
-import '../styles/DemoStyles.css';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 const { Title, Text } = Typography;
 
 const Verification: React.FC = () => {
     const [code, setCode] = useState('');
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
     const navigate = useNavigate();
     const location = useLocation();
     const email = location.state?.email || '';
 
     const handleVerify = async () => {
         if (code.length !== 6) {
-            setError('Введите 6-значный код');
             message.error('Введите 6-значный код');
             return;
         }
 
         setLoading(true);
-        setError('');
-
         try {
             const res = await fetch('http://localhost:5000/verify', {
                 method: 'POST',
@@ -38,12 +33,9 @@ const Verification: React.FC = () => {
                 message.success('Email подтвержден');
                 navigate('/dashboard');
             } else {
-                const err = await res.json();
-                setError(err.error || 'Неверный код');
-                message.error(err.error || 'Неверный код');
+                message.error('Неверный код');
             }
-        } catch (error) {
-            setError('Ошибка соединения');
+        } catch {
             message.error('Ошибка соединения');
         } finally {
             setLoading(false);
@@ -52,87 +44,65 @@ const Verification: React.FC = () => {
 
     const handleResend = async () => {
         try {
-            const res = await fetch('http://localhost:5000/resend-code', {
+            await fetch('http://localhost:5000/resend-code', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email })
             });
-
-            if (res.ok) {
-                message.success('Новый код отправлен на почту');
-            } else {
-                message.error('Ошибка отправки');
-            }
-        } catch (error) {
+            message.success('Новый код отправлен');
+        } catch {
             message.error('Ошибка отправки');
         }
     };
 
     return (
-        <div id="container">
-            <div id="left">
-                <h1>KipCalendar</h1>
-            </div>
-            <div id="right">
-                <Card 
-                    style={{ 
-                        width: '100%', 
-                        maxWidth: 400, 
-                        background: 'rgba(30, 30, 30, 0.95)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)'
+        <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            minHeight: '100vh',
+            backgroundColor: '#f0f2f5'
+        }}>
+            <Card style={{ width: 400, padding: 24 }}>
+                <Title level={3} style={{ textAlign: 'center', marginBottom: 8 }}>
+                    Подтверждение email
+                </Title>
+                <Text style={{ display: 'block', textAlign: 'center', marginBottom: 24, color: '#666' }}>
+                    Код отправлен на {email}
+                </Text>
+
+                <Input
+                    size="large"
+                    prefix={<SafetyOutlined />}
+                    placeholder="6-значный код"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    maxLength={6}
+                    style={{
+                        marginBottom: 16,
+                        fontSize: 18,
+                        letterSpacing: 4,
+                        textAlign: 'center'
                     }}
+                    onPressEnter={handleVerify}
+                />
+
+                <Button
+                    type="primary"
+                    size="large"
+                    block
+                    loading={loading}
+                    disabled={code.length !== 6}
+                    onClick={handleVerify}
+                    style={{ marginBottom: 8 }}
                 >
-                    <div className="form-container">
-                        <Title level={2} style={{ color: '#fff', textAlign: 'center', marginBottom: 16 }}>
-                            Подтверждение email
-                        </Title>
-                        <Text style={{ color: 'rgba(255, 255, 255, 0.7)', display: 'block', marginBottom: 24, textAlign: 'center' }}>
-                            Код отправлен на {email}
-                        </Text>
+                    Подтвердить
+                </Button>
 
-                        <Space direction="vertical" size="large" style={{ width: '100%' }}>
-                            <Input
-                                size="large"
-                                prefix={<SafetyOutlined />}
-                                placeholder="6-значный код"
-                                value={code}
-                                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                                maxLength={6}
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.1)',
-                                    borderColor: 'rgba(255, 255, 255, 0.3)',
-                                    color: '#fff',
-                                    fontSize: 20,
-                                    letterSpacing: 8,
-                                    textAlign: 'center'
-                                }}
-                                onPressEnter={handleVerify}
-                            />
-
-                            <Button
-                                type="primary"
-                                size="large"
-                                block
-                                loading={loading}
-                                disabled={code.length !== 6}
-                                onClick={handleVerify}
-                                style={{ height: 42 }}
-                            >
-                                Подтвердить
-                            </Button>
-
-                            <Button
-                                type="link"
-                                block
-                                onClick={handleResend}
-                                style={{ color: 'rgba(255, 255, 255, 0.7)' }}
-                            >
-                                Отправить код повторно
-                            </Button>
-                        </Space>
-                    </div>
-                </Card>
-            </div>
+                <Button type="link" block onClick={handleResend}>
+                    Отправить код повторно
+                </Button>
+            </Card>
         </div>
     );
 };
