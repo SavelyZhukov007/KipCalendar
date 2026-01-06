@@ -532,8 +532,61 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_subjects_org ON subjects(organization_id);
             CREATE INDEX IF NOT EXISTS idx_lessons_group ON lessons(group_id);
             CREATE INDEX IF NOT EXISTS idx_actual_lessons_date ON actual_lessons(date);
+            --
+            CREATE TABLE IF NOT EXISTS qr_attendance_tokens (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                teacher_id TEXT NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                used BOOLEAN DEFAULT 0,
+                FOREIGN KEY(lesson_id) REFERENCES lessons(id) ON DELETE CASCADE,
+                FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+            --
+            CREATE TABLE IF NOT EXISTS telegram_bots (
+                id TEXT PRIMARY KEY,
+                bot_token TEXT UNIQUE NOT NULL,
+                bot_username TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT 1,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                last_used INTEGER,
+                webhook_url TEXT,
+                owner_id TEXT,
+                FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE SET NULL
+            )
         """
         )
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telegram_tokens (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    token TEXT UNIQUE NOT NULL,
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    expires_at INTEGER NOT NULL,
+                    is_active BOOLEAN DEFAULT 1,
+                    last_used INTEGER,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """
+            )
+        except sqlite3.OperationalError as e:
+            if "already exists" not in str(e):
+                raise
+
+        # Добавить индекс для быстрого поиска
+        try:
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_telegram_tokens_token ON telegram_tokens(token)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_telegram_tokens_user ON telegram_tokens(user_id)"
+            )
+        except:
+            pass
 
         # Теперь добавляем столбцы через ALTER с try-except (без IF NOT EXISTS)
         # Для organizations
@@ -576,6 +629,45 @@ def init_db():
 
         try:
             cur.execute("ALTER TABLE users ADD COLUMN telegram_link_expires INTEGER")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+        try:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telegram_user_settings (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    telegram_id TEXT NOT NULL UNIQUE,
+                    bot_token TEXT NOT NULL UNIQUE,
+                    settings TEXT NOT NULL DEFAULT '{}',
+                    notification_types TEXT NOT NULL DEFAULT '["grade","homework","event","message"]',
+                    last_active INTEGER DEFAULT (strftime('%s', 'now')),
+                    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                    is_active BOOLEAN DEFAULT 1,
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """
+            )
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+        try:
+            cur.execute(
+                """
+                        CREATE TABLE IF NOT EXISTS telegram_bot_stats (
+                            id TEXT PRIMARY KEY,
+                            user_id TEXT NOT NULL,
+                            telegram_id TEXT NOT NULL,
+                            command TEXT NOT NULL,
+                            execution_time INTEGER,
+                            timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+                            success BOOLEAN DEFAULT 1,
+                            error_message TEXT,
+                            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+                        )
+                    """
+            )
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
@@ -2738,7 +2830,7 @@ def search_users():
 #         SELECT c.id FROM chats c
 #         JOIN chat_members cm1 ON c.id = cm1.chat_id
 #         JOIN chat_members cm2 ON c.id = cm2.chat_id
-#         WHERE c.type = 'direct' 
+#         WHERE c.type = 'direct'
 #         AND cm1.user_id = ? AND cm2.user_id = ?
 #     """,
 #         (user_id, target_user_id),
@@ -5285,79 +5377,6 @@ def manage_actual_lesson(actual_lesson_id):
 
         return jsonify({"message": "Lesson updated"})
 
-
-# ============ TELEGRAM BOT SUPPORT ENDPOINTS ============
-
-
-@app.route("/api/telegram/users-with-notifications", methods=["GET", "OPTIONS"])
-def get_users_with_telegram_notifications():
-    """
-    Получить список пользователей с привязанным Telegram, у которых есть непрочитанные уведомления
-    Для использования ботом
-    """
-    if request.method == "OPTIONS":
-        return "", 200
-
-    # В продакшене: добавить API key проверку для бота
-    # bot_api_key = request.headers.get('X-Bot-API-Key')
-    # if bot_api_key != 'YOUR_SECURE_BOT_KEY':
-    #     return jsonify({"error": "Unauthorized"}), 401
-
-    db = get_db()
-    cur = db.cursor()
-
-    # Получаем пользователей с telegram_id и непрочитанными уведомлениями
-    cur.execute(
-        """SELECT DISTINCT u.id as user_id, u.telegram_id
-           FROM users u
-           JOIN notifications n ON u.id = n.user_id
-           WHERE u.telegram_id IS NOT NULL
-           AND n.is_read = 0
-           AND n.sent_to_telegram = 0"""
-    )
-
-    users = [dict(row) for row in cur.fetchall()]
-
-    return jsonify(users)
-
-
-@app.route("/api/telegram/verify-user", methods=["POST", "OPTIONS"])
-def verify_telegram_user():
-    """Проверить существование пользователя по User ID (для бота)"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    data = request.json
-    user_id = data.get("user_id")
-
-    if not user_id:
-        return jsonify({"error": "user_id required"}), 400
-
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute(
-        "SELECT id, username, first_name, last_name FROM users WHERE id = ?", (user_id,)
-    )
-
-    user = cur.fetchone()
-
-    if not user:
-        return jsonify({"exists": False}), 404
-
-    return jsonify(
-        {
-            "exists": True,
-            "username": user["username"],
-            "first_name": user["first_name"],
-            "last_name": user["last_name"],
-        }
-    )
-
-
-# Добавьте в app_test.py после существующих endpoints
-
-
 @app.route("/api/organizations/create", methods=["POST", "OPTIONS"])
 def create_organization_enhanced():
     """Расширенное создание организации"""
@@ -5542,138 +5561,6 @@ def check_expired_users():
     Timer(86400, check_expired_users).start()
 """
 
-# ============ TELEGRAM BOT SUPPORT ENDPOINTS (ENHANCED) ============
-
-
-@app.route("/api/telegram/generate-code", methods=["POST", "OPTIONS"])
-def generate_telegram_code():
-    """Генерация кода для привязки Telegram"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    user_id = get_auth_user()
-    if not user_id:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    db = get_db()
-    cur = db.cursor()
-
-    # Генерируем 6-значный код
-    code = "".join([str(secrets.randbelow(10)) for _ in range(6)])
-    expires = int(time.time()) + 600  # 10 минут
-
-    cur.execute(
-        """UPDATE users 
-           SET telegram_link_code = ?, telegram_link_expires = ? 
-           WHERE id = ?""",
-        (code, expires, user_id),
-    )
-    db.commit()
-
-    return jsonify({"code": code, "expires_in": 600})
-
-
-@app.route("/api/telegram/verify-code", methods=["POST", "OPTIONS"])
-def verify_telegram_code():
-    """Верификация кода и привязка Telegram"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    data = request.json
-    code = data.get("code")
-    telegram_id = data.get("telegram_id")
-
-    if not all([code, telegram_id]):
-        return jsonify({"error": "Code and telegram_id required"}), 400
-
-    db = get_db()
-    cur = db.cursor()
-
-    # Проверяем код
-    cur.execute(
-        """SELECT id, username FROM users 
-           WHERE telegram_link_code = ? 
-           AND telegram_link_expires > ?""",
-        (code, int(time.time())),
-    )
-    user = cur.fetchone()
-
-    if not user:
-        return jsonify({"error": "Invalid or expired code"}), 400
-
-    # Проверяем, не занят ли этот telegram_id
-    cur.execute(
-        "SELECT id FROM users WHERE telegram_id = ? AND id != ?",
-        (telegram_id, user["id"]),
-    )
-    if cur.fetchone():
-        return jsonify({"error": "Telegram already linked to another account"}), 400
-
-    # Привязываем
-    cur.execute(
-        """UPDATE users 
-           SET telegram_id = ?, telegram_link_code = NULL, telegram_link_expires = NULL 
-           WHERE id = ?""",
-        (telegram_id, user["id"]),
-    )
-    db.commit()
-
-    log_audit(user["id"], "TELEGRAM_LINKED", user["id"])
-
-    return jsonify(
-        {
-            "message": "Telegram linked successfully",
-            "user_id": user["id"],
-            "username": user["username"],
-        }
-    )
-
-
-@app.route("/api/telegram/status", methods=["GET", "OPTIONS"])
-def telegram_status():
-    """Проверка статуса привязки по telegram_id"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    telegram_id = request.args.get("telegram_id")
-
-    if not telegram_id:
-        return jsonify({"error": "telegram_id required"}), 400
-
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute("SELECT id, username FROM users WHERE telegram_id = ?", (telegram_id,))
-    user = cur.fetchone()
-
-    if user:
-        return jsonify(
-            {"linked": True, "user_id": user["id"], "username": user["username"]}
-        )
-    else:
-        return jsonify({"linked": False})
-
-
-@app.route("/api/telegram/linked-users", methods=["GET", "OPTIONS"])
-def get_linked_telegram_users():
-    """Получить всех пользователей с привязанным Telegram (для бота)"""
-    if request.method == "OPTIONS":
-        return "", 200
-
-    db = get_db()
-    cur = db.cursor()
-
-    cur.execute(
-        "SELECT id as user_id, telegram_id FROM users WHERE telegram_id IS NOT NULL"
-    )
-    users = [dict(row) for row in cur.fetchall()]
-
-    return jsonify(users)
-
-
-# ============ HOMEWORK ENDPOINT ============
-
-
 @app.route("/api/homework/student/<student_id>", methods=["GET", "OPTIONS"])
 def get_student_homework(student_id):
     """Получить домашние задания студента"""
@@ -5707,9 +5594,6 @@ def get_student_homework(student_id):
 
     homework = [dict(row) for row in cur.fetchall()]
     return jsonify({"homework": homework})
-
-# ============ SOCKET.IO HANDLERS FOR MESSENGER ============
-
 
 @socketio.on("connect")
 def handle_connect():
