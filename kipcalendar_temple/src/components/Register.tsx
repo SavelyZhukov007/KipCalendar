@@ -1,13 +1,9 @@
 // src/components/Register.tsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Button, Input, Typography, Select, message, Card, Space } from 'antd';
-import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons';
+import { Button, TextField, Typography, CircularProgress, Select, MenuItem } from '@mui/material';
 import '../styles/DemoStyles.css';
-import logo from "../assets_logo/kip1.png";
-
-const { Title, Text } = Typography;
-const { Option } = Select;
+import logo from "../assets_logo/kip1.png"
 
 const Register: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -33,7 +29,7 @@ const Register: React.FC = () => {
 
   const handleRegister = async () => {
     if (!email.includes('@')) {
-      message.error('Введите корректный email');
+      alert('Введите корректный email');
       return;
     }
 
@@ -46,14 +42,13 @@ const Register: React.FC = () => {
       });
 
       if (res.ok) {
-        message.success('Регистрация успешна. Проверьте email для подтверждения.');
         navigate('/verification', { state: { email } });
       } else {
         const error = await res.json();
-        message.error(error.error || 'Ошибка регистрации');
+        alert(error.error || 'Ошибка регистрации');
       }
     } catch (error: any) {
-      message.error('Ошибка соединения');
+      alert('Ошибка соединения');
     } finally {
       setLoading(false);
     }
@@ -66,74 +61,59 @@ const Register: React.FC = () => {
         <img src={logo} alt="Kip Logo" />
       </div>
       <div id="right">
-        <Card 
-          style={{ 
-            width: '100%', 
-            maxWidth: 400, 
-            background: 'rgba(30, 30, 30, 0.95)',
-            border: '1px solid rgba(255, 255, 255, 0.1)'
-          }}
-        >
-          <div className="form-container">
-            <Title level={2} style={{ color: '#fff', textAlign: 'center', marginBottom: 24 }}>
-              Регистрация
-            </Title>
-            <Space direction="vertical" size="large" style={{ width: '100%' }}>
-              <Input
-                size="large"
-                prefix={<UserOutlined />}
-                placeholder="Логин"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                style={{ background: 'rgba(255, 255, 255, 0.1)', borderColor: 'rgba(255, 255, 255, 0.3)', color: '#fff' }}
-              />
-              <Input
-                size="large"
-                prefix={<MailOutlined />}
-                type="email"
-                placeholder="Электронная почта"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                style={{ background: 'rgba(255, 255, 255, 0.1)', borderColor: 'rgba(255, 255, 255, 0.3)', color: '#fff' }}
-              />
-              <Input.Password
-                size="large"
-                prefix={<LockOutlined />}
-                placeholder="Пароль"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{ background: 'rgba(255, 255, 255, 0.1)', borderColor: 'rgba(255, 255, 255, 0.3)', color: '#fff' }}
-                onPressEnter={handleRegister}
-              />
-              <Select
-                size="large"
-                value={role}
-                onChange={setRole}
-                style={{ width: '100%' }}
-              >
-                <Option value="student">Студент</Option>
-                <Option value="teacher">Преподаватель</Option>
-                <Option value="admin">Администратор</Option>
-              </Select>
-              <Button
-                type="primary"
-                size="large"
-                block
-                loading={loading}
-                onClick={handleRegister}
-                style={{ height: 42 }}
-              >
-                Зарегистрироваться
-              </Button>
-              <div className="form-footer">
-                <div className="link-row">
-                  <Text style={{ color: 'rgba(255, 255, 255, 0.7)' }}>Уже есть аккаунт?</Text>
-                  <Link to="/login" className="text-link">Войти</Link>
-                </div>
-              </div>
-            </Space>
+        <div className="form-container">
+          <Typography variant="h4" gutterBottom sx={{ color: 'var(--text-light)', textAlign: 'center' }}>
+            Регистрация
+          </Typography>
+          <TextField
+            label="Логин"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            fullWidth
+            margin="normal"
+            InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+          />
+          <TextField
+            label="Электронная почта"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            fullWidth
+            margin="normal"
+            InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+          />
+          <TextField
+            label="Пароль"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            fullWidth
+            margin="normal"
+            InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+          />
+          <Select value={role} onChange={(e) => setRole(e.target.value)} fullWidth margin="dense">
+            <MenuItem value="student">Студент</MenuItem>
+            <MenuItem value="teacher">Преподаватель</MenuItem>
+            <MenuItem value="admin">Администратор</MenuItem>
+          </Select>
+          <Button
+            onClick={handleRegister}
+            variant="contained"
+            fullWidth
+            disabled={loading}
+            className="submit-btn"
+            sx={{ mt: 2 }}
+          >
+            Зарегистрироваться
+          </Button>
+          {loading && <CircularProgress sx={{ mt: 2, display: 'block', mx: 'auto', color: 'var(--text-light)' }} />}
+          <div className="form-footer">
+            <div className="link-row">
+              <span>Уже есть аккаунт?</span>
+              <Link to="/login" className="text-link">Войти</Link>
+            </div>
           </div>
-        </Card>
+        </div>
       </div>
     </div>
   );

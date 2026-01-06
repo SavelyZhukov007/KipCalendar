@@ -533,7 +533,94 @@ def init_db():
             --
             CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-            --
+            --tg bot
+            CREATE TABLE IF NOT EXISTS telegram_links (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE,
+                telegram_id TEXT UNIQUE NOT NULL,
+                telegram_username TEXT,
+                link_code TEXT,
+                link_expires INTEGER,
+                link_attempts INTEGER DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                last_active INTEGER,
+                settings TEXT DEFAULT '{}',
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS telegram_tokens (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                expires_at INTEGER NOT NULL,
+                is_active BOOLEAN DEFAULT 1,
+                last_used INTEGER,
+                ip_address TEXT,
+                user_agent TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS telegram_bot_config (
+                id TEXT PRIMARY KEY,
+                bot_token TEXT NOT NULL,
+                bot_username TEXT,
+                webhook_url TEXT,
+                is_active BOOLEAN DEFAULT 1,
+                owner_id TEXT,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                last_used INTEGER,
+                settings TEXT DEFAULT '{}',
+                FOREIGN KEY(owner_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS telegram_notification_settings (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE,
+                telegram_id TEXT,
+                settings TEXT DEFAULT '{}',
+                notification_types TEXT DEFAULT '["grade", "homework", "event", "message", "announcement"]',
+                quiet_hours_start INTEGER DEFAULT 0,  
+                quiet_hours_end INTEGER DEFAULT 0,    
+                language TEXT DEFAULT 'ru',
+                format TEXT DEFAULT 'detailed',  
+                last_active INTEGER,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                is_active BOOLEAN DEFAULT 1,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS qr_attendance_tokens (
+                id TEXT PRIMARY KEY,
+                lesson_id TEXT NOT NULL,
+                teacher_id TEXT NOT NULL,
+                token TEXT UNIQUE NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                used BOOLEAN DEFAULT 0,
+                used_by TEXT,
+                used_at INTEGER,
+                FOREIGN KEY(lesson_id) REFERENCES lessons(id) ON DELETE CASCADE,
+                FOREIGN KEY(teacher_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS telegram_statistics (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                telegram_id TEXT,
+                command TEXT NOT NULL,
+                execution_time REAL,
+                timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+                success BOOLEAN DEFAULT 1,
+                error_message TEXT,
+                parameters TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_telegram_links_user ON telegram_links(user_id);
+            CREATE INDEX IF NOT EXISTS idx_telegram_links_telegram ON telegram_links(telegram_id);
+            CREATE INDEX IF NOT EXISTS idx_telegram_tokens_token ON telegram_tokens(token);
+            CREATE INDEX IF NOT EXISTS idx_telegram_tokens_user ON telegram_tokens(user_id);
+            CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON qr_attendance_tokens(token);
+            CREATE INDEX IF NOT EXISTS idx_qr_tokens_lesson ON qr_attendance_tokens(lesson_id);
+            CREATE INDEX IF NOT EXISTS idx_telegram_stats_user ON telegram_statistics(user_id);
+            CREATE INDEX IF NOT EXISTS idx_telegram_stats_time ON telegram_statistics(timestamp);
+
         """
         )
         # Добавить индекс для быстрого поиска
@@ -578,10 +665,9 @@ def init_db():
             if "duplicate column" not in str(e).lower():
                 raise
         db.commit()
-
-
 init_db()
 
+# TELEGRAM telegram Telegram Телеграм телеграм ТЕЛЕГРАМ
 
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
@@ -5676,6 +5762,1825 @@ def get_unread_count(chat_id):
 
     count = cur.fetchone()["count"]
     return jsonify({"unread_count": count})
+
+#start
+
+# ============ TELEGRAM BOT TABLES ============
+
+# ============ TELEGRAM HELPER FUNCTIONS ============
+
+def generate_telegram_link_code():
+    """Генерация 6-значного кода для связывания"""
+    return ''.join([str(secrets.randbelow(10)) for _ in range(6)])
+
+def generate_telegram_token():
+    """Генерация токена для бота"""
+    return secrets.token_urlsafe(32)
+
+def generate_qr_token():
+    """Генерация токена для QR-кода"""
+    return secrets.token_urlsafe(16)
+
+def get_telegram_user_id(telegram_id):
+    """Получить user_id по telegram_id"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        "SELECT user_id FROM telegram_links WHERE telegram_id = ? AND is_active = 1",
+        (telegram_id,)
+    )
+    row = cur.fetchone()
+    return row['user_id'] if row else None
+
+def get_telegram_id_by_user(user_id):
+    """Получить telegram_id по user_id"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        "SELECT telegram_id FROM telegram_links WHERE user_id = ? AND is_active = 1",
+        (user_id,)
+    )
+    row = cur.fetchone()
+    return row['telegram_id'] if row else None
+
+def verify_telegram_token(token):
+    """Проверка токена телеграм бота"""
+    db = get_db()
+    cur = db.cursor()
+    cur.execute(
+        "SELECT * FROM telegram_tokens WHERE token = ? AND is_active = 1 AND expires_at > ?",
+        (token, int(time.time()))
+    )
+    token_data = cur.fetchone()
+    if token_data:
+        # Обновляем last_used
+        cur.execute(
+            "UPDATE telegram_tokens SET last_used = ? WHERE id = ?",
+            (int(time.time()), token_data['id'])
+        )
+        db.commit()
+        return token_data
+    return None
+
+def log_telegram_command(user_id, telegram_id, command, success=True, error_message=None, execution_time=None, parameters=None):
+    """Логирование команд бота"""
+    db = get_db()
+    cur = db.cursor()
+    stat_id = generate_uuid()
+    cur.execute(
+        """INSERT INTO telegram_statistics 
+           (id, user_id, telegram_id, command, execution_time, timestamp, success, error_message, parameters)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (stat_id, user_id, telegram_id, command, execution_time, int(time.time()), success, error_message, parameters)
+    )
+    db.commit()
+
+# ============ TELEGRAM BOT API ENDPOINTS ============
+
+# 1. Связывание аккаунта
+@app.route("/api/telegram/link/initiate", methods=["POST", "OPTIONS"])
+def initiate_telegram_link():
+    """Инициация связывания аккаунта Telegram"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, не связан ли уже аккаунт
+    cur.execute(
+        "SELECT * FROM telegram_links WHERE user_id = ? AND is_active = 1",
+        (user_id,)
+    )
+    if cur.fetchone():
+        return jsonify({"error": "Account already linked"}), 400
+    
+    # Генерируем код
+    link_code = generate_telegram_link_code()
+    expires_at = int(time.time()) + 600  # 10 минут
+    
+    # Удаляем старые неиспользованные коды
+    cur.execute("DELETE FROM telegram_links WHERE user_id = ? AND is_active = 0", (user_id,))
+    
+    # Сохраняем новый код
+    link_id = generate_uuid()
+    cur.execute(
+        """INSERT INTO telegram_links 
+           (id, user_id, link_code, link_expires, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (link_id, user_id, link_code, expires_at, int(time.time()))
+    )
+    db.commit()
+    
+    log_audit(user_id, "TELEGRAM_LINK_INITIATED", link_id)
+    
+    return jsonify({
+        "link_code": link_code,
+        "expires_at": expires_at,
+        "expires_in": 600
+    })
+
+@app.route("/api/telegram/link/complete", methods=["POST", "OPTIONS"])
+def complete_telegram_link():
+    """Завершение связывания аккаунта Telegram"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    data = request.json
+    telegram_id = data.get("telegram_id")
+    telegram_username = data.get("telegram_username")
+    link_code = data.get("link_code")
+    
+    if not all([telegram_id, link_code]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем код
+    cur.execute(
+        """SELECT * FROM telegram_links 
+           WHERE link_code = ? AND link_expires > ?""",
+        (link_code, int(time.time()))
+    )
+    link = cur.fetchone()
+    
+    if not link:
+        return jsonify({"error": "Invalid or expired link code"}), 400
+    
+    # Проверяем, не связан ли уже этот телеграм аккаунт
+    cur.execute(
+        "SELECT * FROM telegram_links WHERE telegram_id = ? AND is_active = 1",
+        (telegram_id,)
+    )
+    if cur.fetchone():
+        return jsonify({"error": "Telegram account already linked to another user"}), 400
+    
+    user_id = link['user_id']
+    
+    # Обновляем связь
+    cur.execute(
+        """UPDATE telegram_links 
+           SET telegram_id = ?, telegram_username = ?, is_active = 1, last_active = ?
+           WHERE id = ?""",
+        (telegram_id, telegram_username, int(time.time()), link['id'])
+    )
+    
+    # Создаем настройки уведомлений по умолчанию
+    cur.execute(
+        """INSERT OR IGNORE INTO telegram_notification_settings 
+           (id, user_id, telegram_id, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (generate_uuid(), user_id, telegram_id, int(time.time()))
+    )
+    
+    db.commit()
+    
+    log_audit(user_id, "TELEGRAM_LINK_COMPLETED", link['id'])
+    
+    return jsonify({
+        "success": True,
+        "user_id": user_id,
+        "telegram_id": telegram_id
+    })
+
+@app.route("/api/telegram/unlink", methods=["POST", "OPTIONS"])
+def unlink_telegram_account():
+    """Отвязка аккаунта Telegram"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    user_id = get_auth_user()
+    telegram_id = request.json.get("telegram_id")
+    
+    if not user_id and not telegram_id:
+        return jsonify({"error": "Authentication required"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    if user_id:
+        # Отвязка через веб-интерфейс
+        cur.execute(
+            "UPDATE telegram_links SET is_active = 0 WHERE user_id = ?",
+            (user_id,)
+        )
+        target_user_id = user_id
+    else:
+        # Отвязка через бота
+        cur.execute(
+            "UPDATE telegram_links SET is_active = 0 WHERE telegram_id = ?",
+            (telegram_id,)
+        )
+        cur.execute(
+            "SELECT user_id FROM telegram_links WHERE telegram_id = ?",
+            (telegram_id,)
+        )
+        row = cur.fetchone()
+        target_user_id = row['user_id'] if row else None
+    
+    # Деактивируем все токены
+    cur.execute(
+        "UPDATE telegram_tokens SET is_active = 0 WHERE user_id = ?",
+        (target_user_id,)
+    )
+    
+    # Деактивируем настройки уведомлений
+    cur.execute(
+        "UPDATE telegram_notification_settings SET is_active = 0 WHERE user_id = ?",
+        (target_user_id,)
+    )
+    
+    db.commit()
+    
+    if target_user_id:
+        log_audit(target_user_id, "TELEGRAM_UNLINKED")
+    
+    return jsonify({"success": True})
+
+# 2. Аутентификация бота
+@app.route("/api/telegram/token/generate", methods=["POST", "OPTIONS"])
+def generate_telegram_auth_token():
+    """Генерация токена для аутентификации бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    data = request.json
+    telegram_id = data.get("telegram_id")
+    
+    if not telegram_id:
+        return jsonify({"error": "telegram_id required"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Получаем user_id
+    user_id = get_telegram_user_id(telegram_id)
+    if not user_id:
+        return jsonify({"error": "Telegram account not linked"}), 404
+    
+    # Деактивируем старые токены
+    cur.execute(
+        "UPDATE telegram_tokens SET is_active = 0 WHERE user_id = ?",
+        (user_id,)
+    )
+    
+    # Генерируем новый токен
+    token = generate_telegram_token()
+    token_id = generate_uuid()
+    expires_at = int(time.time()) + (30 * 24 * 60 * 60)  # 30 дней
+    
+    cur.execute(
+        """INSERT INTO telegram_tokens 
+           (id, user_id, token, expires_at, created_at, ip_address, user_agent)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (token_id, user_id, token, expires_at, int(time.time()), 
+         request.remote_addr, request.user_agent.string)
+    )
+    
+    db.commit()
+    
+    log_audit(user_id, "TELEGRAM_TOKEN_GENERATED", token_id)
+    
+    return jsonify({
+        "token": token,
+        "expires_at": expires_at,
+        "user_id": user_id
+    })
+
+@app.route("/api/telegram/token/verify", methods=["POST", "OPTIONS"])
+def verify_telegram_auth_token():
+    """Проверка токена аутентификации"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    data = request.json
+    token = data.get("token")
+    
+    if not token:
+        return jsonify({"error": "Token required"}), 400
+    
+    token_data = verify_telegram_token(token)
+    if not token_data:
+        return jsonify({"error": "Invalid or expired token"}), 401
+    
+    return jsonify({
+        "valid": True,
+        "user_id": token_data['user_id'],
+        "expires_at": token_data['expires_at']
+    })
+
+# 3. Получение данных для бота
+@app.route("/api/telegram/user/<user_id>/profile", methods=["GET", "OPTIONS"])
+def get_telegram_user_profile(user_id):
+    """Получить профиль пользователя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    # Проверка токена телеграм
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Получаем базовую информацию
+    cur.execute(
+        """SELECT id, username, first_name, last_name, middle_name, 
+                  email, roles, current_role
+           FROM users WHERE id = ?""",
+        (user_id,)
+    )
+    user = cur.fetchone()
+    
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    user_dict = dict(user)
+    user_dict['roles'] = json.loads(user_dict['roles'])
+    
+    # Получаем организации
+    cur.execute(
+        """SELECT o.id, o.name, o.short_name, om.roles, om.current_role
+           FROM organizations o
+           JOIN organization_members om ON o.id = om.organization_id
+           WHERE om.user_id = ?""",
+        (user_id,)
+    )
+    user_dict['organizations'] = [dict(row) for row in cur.fetchall()]
+    
+    # Если студент - получаем группы
+    if 'student' in user_dict['roles']:
+        cur.execute(
+            """SELECT g.id, g.name, g.specialty, g.course, o.name as org_name
+               FROM user_groups ug
+               JOIN groups g ON ug.group_id = g.id
+               JOIN organizations o ON g.organization_id = o.id
+               WHERE ug.user_id = ?
+               ORDER BY g.course, g.name""",
+            (user_id,)
+        )
+        user_dict['groups'] = [dict(row) for row in cur.fetchall()]
+    
+    return jsonify(user_dict)
+
+@app.route("/api/telegram/user/<user_id>/schedule", methods=["GET", "OPTIONS"])
+def get_telegram_user_schedule(user_id):
+    """Получить расписание пользователя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    date_str = request.args.get("date")
+    if not date_str:
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    period = request.args.get("period", "day")  # day, week, month
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Определяем даты
+    from datetime import datetime, timedelta
+    current_date = datetime.strptime(date_str, "%Y-%m-%d")
+    
+    if period == "day":
+        start_date = current_date
+        end_date = current_date
+    elif period == "week":
+        start_date = current_date - timedelta(days=current_date.weekday())
+        end_date = start_date + timedelta(days=6)
+    else:  # month
+        start_date = current_date.replace(day=1)
+        next_month = current_date.replace(day=28) + timedelta(days=4)
+        end_date = next_month - timedelta(days=next_month.day)
+    
+    schedule = []
+    
+    # 1. Получаем занятия из расписания (actual lessons)
+    cur.execute(
+        """SELECT al.id, al.date, al.topic, al.homework,
+                  l.start_time, l.end_time, l.lesson_type,
+                  s.name as subject_name, s.code as subject_code,
+                  u.first_name as teacher_first_name, u.last_name as teacher_last_name,
+                  r.name as room_name, b.name as building_name
+           FROM user_groups ug
+           JOIN groups g ON ug.group_id = g.id
+           JOIN lessons l ON l.group_id = g.id
+           JOIN subjects s ON l.subject_id = s.id
+           JOIN users u ON l.teacher_id = u.id
+           LEFT JOIN rooms r ON l.room_id = r.id
+           LEFT JOIN buildings b ON r.building_id = b.id
+           LEFT JOIN actual_lessons al ON al.lesson_id = l.id AND al.date = ?
+           WHERE ug.user_id = ? AND strftime('%w', ?) = l.day_of_week
+           ORDER BY l.start_time""",
+        (date_str, user_id, date_str)
+    )
+    
+    lessons = cur.fetchall()
+    for lesson in lessons:
+        schedule.append({
+            "type": "lesson",
+            "id": lesson['id'],
+            "date": lesson['date'] or date_str,
+            "start_time": lesson['start_time'],
+            "end_time": lesson['end_time'],
+            "subject": lesson['subject_name'],
+            "teacher": f"{lesson['teacher_first_name']} {lesson['teacher_last_name']}",
+            "room": lesson['room_name'],
+            "building": lesson['building_name'],
+            "topic": lesson['topic'],
+            "homework": lesson['homework']
+        })
+    
+    # 2. Получаем события календаря
+    cur.execute(
+        """SELECT e.*, u.username as owner_username
+           FROM events e
+           JOIN users u ON e.owner_id = u.id
+           WHERE (e.owner_id = ? OR e.id IN (
+               SELECT event_id FROM shared_events 
+               WHERE user_id = ? AND accepted = 1
+           ))
+           AND e.date BETWEEN ? AND ?
+           ORDER BY e.date, e.time""",
+        (user_id, user_id, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
+    )
+    
+    events = cur.fetchall()
+    for event in events:
+        schedule.append({
+            "type": "event",
+            "event_type": event['event_type'],
+            "id": event['id'],
+            "date": event['date'],
+            "time": event['time'],
+            "end_time": event.get('end_time'),
+            "title": event['title'],
+            "description": event['description'],
+            "owner": event['owner_username']
+        })
+    
+    return jsonify({
+        "period": period,
+        "start_date": start_date.strftime("%Y-%m-%d"),
+        "end_date": end_date.strftime("%Y-%m-%d"),
+        "schedule": schedule
+    })
+
+@app.route("/api/telegram/user/<user_id>/homework", methods=["GET", "OPTIONS"])
+def get_telegram_user_homework(user_id):
+    """Получить домашние задания пользователя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    status = request.args.get("status", "active")  # active, completed, all
+    from_date = request.args.get("from_date")
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    query = """
+        SELECT al.id, al.date, al.topic, al.homework,
+               s.name as subject_name, s.code as subject_code,
+               l.start_time, l.end_time,
+               g.name as group_name
+        FROM user_groups ug
+        JOIN groups g ON ug.group_id = g.id
+        JOIN lessons l ON l.group_id = g.id
+        JOIN subjects s ON l.subject_id = s.id
+        LEFT JOIN actual_lessons al ON al.lesson_id = l.id
+        WHERE ug.user_id = ? 
+        AND al.homework IS NOT NULL 
+        AND al.homework != ''
+    """
+    
+    params = [user_id]
+    
+    if from_date:
+        query += " AND al.date >= ?"
+        params.append(from_date)
+    
+    if status == "active":
+        query += " AND (al.date >= date('now') OR al.date IS NULL)"
+    
+    query += " ORDER BY al.date ASC, l.start_time"
+    
+    cur.execute(query, params)
+    homework = [dict(row) for row in cur.fetchall()]
+    
+    return jsonify({"homework": homework})
+
+@app.route("/api/telegram/user/<user_id>/grades", methods=["GET", "OPTIONS"])
+def get_telegram_user_grades(user_id):
+    """Получить оценки пользователя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    subject_id = request.args.get("subject_id")
+    limit = int(request.args.get("limit", 10))
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    query = """
+        SELECT m.value, m.comment, m.created_at,
+               al.date, al.topic,
+               s.name as subject_name, s.id as subject_id,
+               u.first_name as teacher_first_name, u.last_name as teacher_last_name
+        FROM marks m
+        JOIN actual_lessons al ON m.actual_lesson_id = al.id
+        JOIN lessons l ON al.lesson_id = l.id
+        JOIN subjects s ON l.subject_id = s.id
+        JOIN users u ON l.teacher_id = u.id
+        WHERE m.student_id = ?
+    """
+    
+    params = [user_id]
+    
+    if subject_id:
+        query += " AND s.id = ?"
+        params.append(subject_id)
+    
+    query += " ORDER BY al.date DESC, m.created_at DESC LIMIT ?"
+    params.append(limit)
+    
+    cur.execute(query, params)
+    grades = [dict(row) for row in cur.fetchall()]
+    
+    # Подсчет средней оценки
+    try:
+        numeric_grades = [float(g['value']) for g in grades if g['value'] and g['value'].replace('.', '').isdigit()]
+        avg_grade = sum(numeric_grades) / len(numeric_grades) if numeric_grades else None
+    except:
+        avg_grade = None
+    
+    return jsonify({
+        "grades": grades,
+        "average": round(avg_grade, 2) if avg_grade else None,
+        "count": len(grades)
+    })
+
+@app.route("/api/telegram/user/<user_id>/attendance", methods=["GET", "OPTIONS"])
+def get_telegram_user_attendance(user_id):
+    """Получить посещаемость пользователя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    from_date = request.args.get("from_date", "2024-01-01")
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Получаем все отметки посещаемости
+    cur.execute(
+        """SELECT a.status, a.note, al.date,
+                  s.name as subject_name,
+                  l.start_time, l.end_time,
+                  u.first_name as teacher_first_name, u.last_name as teacher_last_name
+           FROM attendance a
+           JOIN actual_lessons al ON a.actual_lesson_id = al.id
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           JOIN users u ON l.teacher_id = u.id
+           WHERE a.student_id = ? AND al.date >= ?
+           ORDER BY al.date DESC""",
+        (user_id, from_date)
+    )
+    
+    attendance = [dict(row) for row in cur.fetchall()]
+    
+    # Подсчет статистики
+    total = len(attendance)
+    present = sum(1 for a in attendance if a['status'] == 'present')
+    absent = sum(1 for a in attendance if a['status'] == 'absent')
+    late = sum(1 for a in attendance if a['status'] == 'late')
+    
+    attendance_rate = (present / total * 100) if total > 0 else 0
+    
+    # Статистика по предметам
+    cur.execute(
+        """SELECT s.name as subject_name,
+                  COUNT(*) as total,
+                  SUM(CASE WHEN a.status = 'present' THEN 1 ELSE 0 END) as present,
+                  SUM(CASE WHEN a.status = 'absent' THEN 1 ELSE 0 END) as absent,
+                  SUM(CASE WHEN a.status = 'late' THEN 1 ELSE 0 END) as late
+           FROM attendance a
+           JOIN actual_lessons al ON a.actual_lesson_id = al.id
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           WHERE a.student_id = ? AND al.date >= ?
+           GROUP BY s.id, s.name
+           ORDER BY s.name""",
+        (user_id, from_date)
+    )
+    
+    by_subject = [dict(row) for row in cur.fetchall()]
+    
+    return jsonify({
+        "statistics": {
+            "total": total,
+            "present": present,
+            "absent": absent,
+            "late": late,
+            "attendance_rate": round(attendance_rate, 1)
+        },
+        "records": attendance,
+        "by_subject": by_subject
+    })
+
+# 4. Уведомления для бота
+@app.route("/api/telegram/notifications/pending", methods=["GET", "OPTIONS"])
+def get_pending_telegram_notifications():
+    """Получить непрочитанные уведомления для отправки в телеграм"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    telegram_id = request.args.get("telegram_id")
+    if not telegram_id:
+        return jsonify({"error": "telegram_id required"}), 400
+    
+    user_id = get_telegram_user_id(telegram_id)
+    if not user_id:
+        return jsonify({"error": "User not found"}), 404
+    
+    limit = int(request.args.get("limit", 50))
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем настройки уведомлений
+    cur.execute(
+        "SELECT settings, notification_types FROM telegram_notification_settings WHERE user_id = ?",
+        (user_id,)
+    )
+    settings_row = cur.fetchone()
+    
+    if not settings_row or json.loads(settings_row.get('settings', '{}')).get('enabled', True) == False:
+        return jsonify({"notifications": []})
+    
+    notification_types = json.loads(settings_row.get('notification_types', '[]'))
+    
+    # Получаем уведомления
+    query = """
+        SELECT n.*, u.username as sender_username
+        FROM notifications n
+        LEFT JOIN users u ON n.content LIKE '%' || u.username || '%'
+        WHERE n.user_id = ? AND n.sent_to_telegram = 0
+    """
+    
+    params = [user_id]
+    
+    if notification_types:
+        placeholders = ','.join(['?'] * len(notification_types))
+        query += f" AND n.type IN ({placeholders})"
+        params.extend(notification_types)
+    
+    query += " ORDER BY n.timestamp ASC LIMIT ?"
+    params.append(limit)
+    
+    cur.execute(query, params)
+    notifications = [dict(row) for row in cur.fetchall()]
+    
+    # Обновляем флаг отправки
+    if notifications:
+        notification_ids = [n['id'] for n in notifications]
+        placeholders = ','.join(['?'] * len(notification_ids))
+        cur.execute(
+            f"UPDATE notifications SET sent_to_telegram = 1 WHERE id IN ({placeholders})",
+            notification_ids
+        )
+        db.commit()
+    
+    return jsonify({"notifications": notifications})
+
+@app.route("/api/telegram/notifications/mark-sent", methods=["POST", "OPTIONS"])
+def mark_telegram_notifications_sent():
+    """Отметить уведомления как отправленные в телеграм"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    data = request.json
+    notification_ids = data.get("notification_ids", [])
+    
+    if not notification_ids:
+        return jsonify({"error": "notification_ids required"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    placeholders = ','.join(['?'] * len(notification_ids))
+    cur.execute(
+        f"UPDATE notifications SET sent_to_telegram = 1 WHERE id IN ({placeholders})",
+        notification_ids
+    )
+    db.commit()
+    
+    return jsonify({"success": True, "count": len(notification_ids)})
+
+# 5. Действия преподавателя через бота
+@app.route("/api/telegram/teacher/groups", methods=["GET", "OPTIONS"])
+def get_telegram_teacher_groups():
+    """Получить группы преподавателя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    teacher_id = request.args.get("teacher_id")
+    if not teacher_id:
+        return jsonify({"error": "teacher_id required"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что пользователь - преподаватель
+    cur.execute("SELECT roles FROM users WHERE id = ?", (teacher_id,))
+    user = cur.fetchone()
+    if not user or 'teacher' not in json.loads(user['roles']):
+        return jsonify({"error": "User is not a teacher"}), 403
+    
+    cur.execute(
+        """SELECT DISTINCT g.*, o.name as org_name
+           FROM groups g
+           JOIN group_subjects gs ON g.id = gs.group_id
+           WHERE gs.teacher_id = ?
+           ORDER BY g.course, g.name""",
+        (teacher_id,)
+    )
+    
+    groups = [dict(row) for row in cur.fetchall()]
+    
+    # Для каждой группы получаем количество студентов
+    for group in groups:
+        cur.execute(
+            "SELECT COUNT(*) as count FROM user_groups WHERE group_id = ?",
+            (group['id'],)
+        )
+        group['student_count'] = cur.fetchone()['count']
+    
+    return jsonify({"groups": groups})
+
+@app.route("/api/telegram/teacher/add-grade", methods=["POST", "OPTIONS"])
+def telegram_add_grade():
+    """Добавить оценку через бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    data = request.json
+    teacher_id = data.get("teacher_id")
+    student_id = data.get("student_id")
+    actual_lesson_id = data.get("actual_lesson_id")
+    value = data.get("value")
+    comment = data.get("comment")
+    
+    if not all([teacher_id, student_id, actual_lesson_id, value]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что учитель ведет этот урок
+    cur.execute(
+        """SELECT l.id FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           WHERE al.id = ? AND l.teacher_id = ?""",
+        (actual_lesson_id, teacher_id)
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Teacher doesn't teach this lesson"}), 403
+    
+    # Добавляем оценку
+    mark_id = generate_uuid()
+    cur.execute(
+        """INSERT INTO marks (id, actual_lesson_id, student_id, value, comment, created_at) 
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (mark_id, actual_lesson_id, student_id, value, comment, int(time.time()))
+    )
+    db.commit()
+    
+    # Создаем уведомление для студента
+    cur.execute(
+        """SELECT s.name as subject_name FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           WHERE al.id = ?""",
+        (actual_lesson_id,)
+    )
+    subject_info = cur.fetchone()
+    subject_name = subject_info['subject_name'] if subject_info else "предмету"
+    
+    create_notification(
+        student_id, 
+        "grade", 
+        f"Новая оценка по {subject_name}: {value}" + (f". {comment}" if comment else "")
+    )
+    
+    log_audit(teacher_id, "TELEGRAM_GRADE_ADDED", mark_id)
+    
+    return jsonify({
+        "success": True,
+        "mark_id": mark_id,
+        "message": "Grade added successfully"
+    })
+
+@app.route("/api/telegram/teacher/mark-attendance", methods=["POST", "OPTIONS"])
+def telegram_mark_attendance():
+    """Отметить посещаемость через бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    data = request.json
+    teacher_id = data.get("teacher_id")
+    actual_lesson_id = data.get("actual_lesson_id")
+    attendance_data = data.get("attendance", [])  # array of {student_id, status, note}
+    
+    if not all([teacher_id, actual_lesson_id, attendance_data]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что учитель ведет этот урок
+    cur.execute(
+        """SELECT l.id FROM actual_lessons al
+           JOIN lessons l ON al.lesson_id = l.id
+           WHERE al.id = ? AND l.teacher_id = ?""",
+        (actual_lesson_id, teacher_id)
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Teacher doesn't teach this lesson"}), 403
+    
+    marked_count = 0
+    errors = []
+    
+    for entry in attendance_data:
+        student_id = entry.get("student_id")
+        status = entry.get("status")
+        note = entry.get("note")
+        
+        if not student_id or not status:
+            errors.append(f"Missing student_id or status for entry")
+            continue
+        
+        # Проверяем существование записи
+        cur.execute(
+            "SELECT id FROM attendance WHERE actual_lesson_id = ? AND student_id = ?",
+            (actual_lesson_id, student_id)
+        )
+        existing = cur.fetchone()
+        
+        if existing:
+            # Обновляем
+            cur.execute(
+                "UPDATE attendance SET status = ?, note = ? WHERE id = ?",
+                (status, note, existing['id'])
+            )
+        else:
+            # Создаем новую
+            attendance_id = generate_uuid()
+            cur.execute(
+                """INSERT INTO attendance (id, actual_lesson_id, student_id, status, note) 
+                   VALUES (?, ?, ?, ?, ?)""",
+                (attendance_id, actual_lesson_id, student_id, status, note)
+            )
+        
+        marked_count += 1
+    
+    db.commit()
+    log_audit(teacher_id, "TELEGRAM_ATTENDANCE_MARKED", actual_lesson_id)
+    
+    return jsonify({
+        "success": True,
+        "marked": marked_count,
+        "errors": errors if errors else None
+    })
+
+# 6. QR-коды для посещаемости
+@app.route("/api/telegram/qr/generate", methods=["POST", "OPTIONS"])
+def generate_qr_attendance_token():
+    """Генерация токена для QR-кода посещаемости"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    data = request.json
+    teacher_id = data.get("teacher_id")
+    lesson_id = data.get("lesson_id")
+    duration_minutes = data.get("duration", 15)  # по умолчанию 15 минут
+    
+    if not all([teacher_id, lesson_id]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что учитель ведет этот урок
+    cur.execute(
+        "SELECT id FROM lessons WHERE id = ? AND teacher_id = ?",
+        (lesson_id, teacher_id)
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Teacher doesn't teach this lesson"}), 403
+    
+    # Генерируем токен
+    qr_token = generate_qr_token()
+    token_id = generate_uuid()
+    expires_at = int(time.time()) + (duration_minutes * 60)
+    
+    # Деактивируем старые токены для этого урока
+    cur.execute(
+        "UPDATE qr_attendance_tokens SET used = 1 WHERE lesson_id = ? AND expires_at > ?",
+        (lesson_id, int(time.time()))
+    )
+    
+    # Сохраняем новый токен
+    cur.execute(
+        """INSERT INTO qr_attendance_tokens 
+           (id, lesson_id, teacher_id, token, expires_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (token_id, lesson_id, teacher_id, qr_token, expires_at, int(time.time()))
+    )
+    
+    db.commit()
+    
+    log_audit(teacher_id, "QR_TOKEN_GENERATED", token_id)
+    
+    return jsonify({
+        "token": qr_token,
+        "expires_at": expires_at,
+        "expires_in": duration_minutes * 60,
+        "qr_url": f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={qr_token}"
+    })
+
+@app.route("/api/telegram/qr/verify", methods=["POST", "OPTIONS"])
+def verify_qr_attendance_token():
+    """Проверка токена QR-кода"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    data = request.json
+    qr_token = data.get("token")
+    student_id = data.get("student_id")
+    
+    if not all([qr_token, student_id]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем токен
+    cur.execute(
+        """SELECT q.*, l.group_id, l.subject_id, s.name as subject_name
+           FROM qr_attendance_tokens q
+           JOIN lessons l ON q.lesson_id = l.id
+           JOIN subjects s ON l.subject_id = s.id
+           WHERE q.token = ? AND q.expires_at > ? AND q.used = 0""",
+        (qr_token, int(time.time()))
+    )
+    token_data = cur.fetchone()
+    
+    if not token_data:
+        return jsonify({"error": "Invalid or expired token"}), 400
+    
+    # Проверяем, что студент в группе
+    cur.execute(
+        "SELECT user_id FROM user_groups WHERE group_id = ? AND user_id = ?",
+        (token_data['group_id'], student_id)
+    )
+    if not cur.fetchone():
+        return jsonify({"error": "Student not in this group"}), 403
+    
+    # Проверяем, не использовал ли уже студент этот токен
+    cur.execute(
+        "SELECT id FROM qr_attendance_tokens WHERE token = ? AND used_by = ?",
+        (qr_token, student_id)
+    )
+    if cur.fetchone():
+        return jsonify({"error": "Token already used by this student"}), 400
+    
+    # Находим actual_lesson на сегодня
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    cur.execute(
+        """SELECT al.id FROM actual_lessons al
+           WHERE al.lesson_id = ? AND al.date = ?""",
+        (token_data['lesson_id'], today)
+    )
+    actual_lesson = cur.fetchone()
+    
+    if not actual_lesson:
+        # Создаем actual_lesson если его нет
+        actual_lesson_id = generate_uuid()
+        cur.execute(
+            "INSERT INTO actual_lessons (id, lesson_id, date) VALUES (?, ?, ?)",
+            (actual_lesson_id, token_data['lesson_id'], today)
+        )
+    else:
+        actual_lesson_id = actual_lesson['id']
+    
+    # Отмечаем посещаемость
+    attendance_id = generate_uuid()
+    cur.execute(
+        """INSERT INTO attendance (id, actual_lesson_id, student_id, status, note)
+           VALUES (?, ?, ?, 'present', 'Marked via QR code')""",
+        (attendance_id, actual_lesson_id, student_id)
+    )
+    
+    # Помечаем токен как использованный
+    cur.execute(
+        "UPDATE qr_attendance_tokens SET used = 1, used_by = ?, used_at = ? WHERE id = ?",
+        (student_id, int(time.time()), token_data['id'])
+    )
+    
+    db.commit()
+    
+    # Создаем уведомление для студента
+    create_notification(
+        student_id,
+        "attendance",
+        f"Посещаемость отмечена по предмету {token_data['subject_name']}"
+    )
+    
+    log_audit(student_id, "QR_ATTENDANCE_MARKED", attendance_id)
+    
+    return jsonify({
+        "success": True,
+        "attendance_id": attendance_id,
+        "subject": token_data['subject_name'],
+        "message": "Attendance marked successfully"
+    })
+
+# 7. Настройки уведомлений
+@app.route("/api/telegram/settings", methods=["GET", "PUT", "OPTIONS"])
+def telegram_notification_settings():
+    """Управление настройками уведомлений для телеграм"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    telegram_id = request.args.get("telegram_id") or request.json.get("telegram_id")
+    if not telegram_id:
+        return jsonify({"error": "telegram_id required"}), 400
+    
+    user_id = get_telegram_user_id(telegram_id)
+    if not user_id:
+        return jsonify({"error": "User not found"}), 404
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    if request.method == "GET":
+        cur.execute(
+            "SELECT * FROM telegram_notification_settings WHERE user_id = ?",
+            (user_id,)
+        )
+        settings = cur.fetchone()
+        
+        if not settings:
+            # Создаем настройки по умолчанию
+            settings_id = generate_uuid()
+            cur.execute(
+                """INSERT INTO telegram_notification_settings 
+                   (id, user_id, telegram_id, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (settings_id, user_id, telegram_id, int(time.time()))
+            )
+            db.commit()
+            
+            cur.execute(
+                "SELECT * FROM telegram_notification_settings WHERE id = ?",
+                (settings_id,)
+            )
+            settings = cur.fetchone()
+        
+        settings_dict = dict(settings)
+        settings_dict['settings'] = json.loads(settings_dict.get('settings', '{}'))
+        settings_dict['notification_types'] = json.loads(settings_dict.get('notification_types', '[]'))
+        
+        return jsonify(settings_dict)
+    
+    else:  # PUT
+        data = request.json
+        
+        # Обновляем настройки
+        updates = []
+        params = []
+        
+        if 'settings' in data:
+            updates.append("settings = ?")
+            params.append(json.dumps(data['settings']))
+        
+        if 'notification_types' in data:
+            updates.append("notification_types = ?")
+            params.append(json.dumps(data['notification_types']))
+        
+        if 'quiet_hours_start' in data:
+            updates.append("quiet_hours_start = ?")
+            params.append(data['quiet_hours_start'])
+        
+        if 'quiet_hours_end' in data:
+            updates.append("quiet_hours_end = ?")
+            params.append(data['quiet_hours_end'])
+        
+        if 'language' in data:
+            updates.append("language = ?")
+            params.append(data['language'])
+        
+        if 'format' in data:
+            updates.append("format = ?")
+            params.append(data['format'])
+        
+        if 'is_active' in data:
+            updates.append("is_active = ?")
+            params.append(data['is_active'])
+        
+        if updates:
+            updates.append("last_active = ?")
+            params.append(int(time.time()))
+            
+            params.append(user_id)
+            
+            sql = f"UPDATE telegram_notification_settings SET {', '.join(updates)} WHERE user_id = ?"
+            cur.execute(sql, params)
+            db.commit()
+        
+        log_audit(user_id, "TELEGRAM_SETTINGS_UPDATED")
+        
+        return jsonify({"success": True, "message": "Settings updated"})
+
+# 8. Административные функции
+@app.route("/api/telegram/admin/stats", methods=["GET", "OPTIONS"])
+def get_telegram_admin_stats():
+    """Получить статистику использования бота (админ)"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    # Проверка администратора
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что пользователь - администратор
+    cur.execute("SELECT roles FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user or 'admin' not in json.loads(user['roles']):
+        return jsonify({"error": "Admin access required"}), 403
+    
+    # Общая статистика
+    cur.execute("SELECT COUNT(*) as count FROM telegram_links WHERE is_active = 1")
+    linked_users = cur.fetchone()['count']
+    
+    cur.execute("SELECT COUNT(*) as count FROM telegram_statistics")
+    total_commands = cur.fetchone()['count']
+    
+    cur.execute("SELECT COUNT(DISTINCT user_id) as count FROM telegram_statistics WHERE timestamp > ?", 
+                (int(time.time()) - 24*60*60))
+    active_today = cur.fetchone()['count']
+    
+    # Популярные команды
+    cur.execute("""
+        SELECT command, COUNT(*) as count 
+        FROM telegram_statistics 
+        WHERE timestamp > ?
+        GROUP BY command 
+        ORDER BY count DESC 
+        LIMIT 10
+    """, (int(time.time()) - 7*24*60*60,))
+    popular_commands = [dict(row) for row in cur.fetchall()]
+    
+    # Статистика по ошибкам
+    cur.execute("""
+        SELECT COUNT(*) as total_errors,
+               COUNT(CASE WHEN error_message LIKE '%token%' THEN 1 END) as token_errors,
+               COUNT(CASE WHEN error_message LIKE '%not found%' THEN 1 END) as not_found_errors
+        FROM telegram_statistics 
+        WHERE success = 0 AND timestamp > ?
+    """, (int(time.time()) - 7*24*60*60,))
+    error_stats = dict(cur.fetchone())
+    
+    # Активность по дням
+    cur.execute("""
+        SELECT DATE(datetime(timestamp, 'unixepoch')) as date,
+               COUNT(*) as commands,
+               COUNT(DISTINCT user_id) as users
+        FROM telegram_statistics 
+        WHERE timestamp > ?
+        GROUP BY date
+        ORDER BY date DESC
+        LIMIT 30
+    """, (int(time.time()) - 30*24*60*60,))
+    daily_activity = [dict(row) for row in cur.fetchall()]
+    
+    return jsonify({
+        "linked_users": linked_users,
+        "total_commands": total_commands,
+        "active_today": active_today,
+        "popular_commands": popular_commands,
+        "error_stats": error_stats,
+        "daily_activity": daily_activity
+    })
+
+@app.route("/api/telegram/admin/users", methods=["GET", "OPTIONS"])
+def get_telegram_admin_users():
+    """Получить список пользователей бота (админ)"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что пользователь - администратор
+    cur.execute("SELECT roles FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user or 'admin' not in json.loads(user['roles']):
+        return jsonify({"error": "Admin access required"}), 403
+    
+    search = request.args.get("search", "")
+    limit = int(request.args.get("limit", 50))
+    offset = int(request.args.get("offset", 0))
+    
+    query = """
+        SELECT tl.*, u.username, u.email, u.first_name, u.last_name,
+               tns.is_active as notifications_active,
+               (SELECT COUNT(*) FROM telegram_statistics ts WHERE ts.user_id = tl.user_id) as command_count,
+               (SELECT MAX(timestamp) FROM telegram_statistics ts WHERE ts.user_id = tl.user_id) as last_command
+        FROM telegram_links tl
+        JOIN users u ON tl.user_id = u.id
+        LEFT JOIN telegram_notification_settings tns ON tl.user_id = tns.user_id
+        WHERE tl.is_active = 1
+    """
+    
+    params = []
+    
+    if search:
+        query += " AND (u.username LIKE ? OR u.email LIKE ? OR tl.telegram_username LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+    
+    query += " ORDER BY tl.last_active DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    
+    cur.execute(query, params)
+    users = [dict(row) for row in cur.fetchall()]
+    
+    # Общее количество
+    count_query = "SELECT COUNT(*) as count FROM telegram_links WHERE is_active = 1"
+    count_params = []
+    
+    if search:
+        count_query += " AND user_id IN (SELECT id FROM users WHERE username LIKE ? OR email LIKE ?)"
+        count_params.extend([f"%{search}%", f"%{search}%"])
+    
+    cur.execute(count_query, count_params)
+    total = cur.fetchone()['count']
+    
+    return jsonify({
+        "users": users,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    })
+
+@app.route("/api/telegram/admin/broadcast", methods=["POST", "OPTIONS"])
+def send_telegram_broadcast():
+    """Отправка рассылки пользователям бота (админ)"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что пользователь - администратор
+    cur.execute("SELECT roles FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user or 'admin' not in json.loads(user['roles']):
+        return jsonify({"error": "Admin access required"}), 403
+    
+    data = request.json
+    message = data.get("message")
+    target = data.get("target", "all")  # all, students, teachers, specific_org
+    org_id = data.get("org_id")
+    
+    if not message:
+        return jsonify({"error": "Message required"}), 400
+    
+    # Получаем пользователей для рассылки
+    query = """
+        SELECT tl.user_id, tl.telegram_id, u.username, u.roles
+        FROM telegram_links tl
+        JOIN users u ON tl.user_id = u.id
+        JOIN telegram_notification_settings tns ON tl.user_id = tns.user_id
+        WHERE tl.is_active = 1 AND tns.is_active = 1
+    """
+    
+    params = []
+    
+    if target == "students":
+        query += " AND u.roles LIKE '%student%'"
+    elif target == "teachers":
+        query += " AND u.roles LIKE '%teacher%'"
+    elif target == "specific_org" and org_id:
+        query += """
+            AND tl.user_id IN (
+                SELECT user_id FROM organization_members 
+                WHERE organization_id = ?
+            )
+        """
+        params.append(org_id)
+    
+    cur.execute(query, params)
+    users = [dict(row) for row in cur.fetchall()]
+    
+    # Создаем уведомления для каждого пользователя
+    notification_ids = []
+    for user_data in users:
+        notif_id = create_notification(
+            user_data['user_id'],
+            "announcement",
+            f"📢 Объявление от администрации: {message}"
+        )
+        notification_ids.append(notif_id)
+    
+    log_audit(user_id, "TELEGRAM_BROADCAST_SENT", details={
+        "target": target,
+        "recipients": len(users),
+        "message_length": len(message)
+    })
+    
+    return jsonify({
+        "success": True,
+        "recipients": len(users),
+        "notification_ids": notification_ids
+    })
+
+# 9. Вспомогательные эндпоинты
+@app.route("/api/telegram/user/<user_id>/subjects", methods=["GET", "OPTIONS"])
+def get_telegram_user_subjects(user_id):
+    """Получить предметы пользователя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем роль пользователя
+    cur.execute("SELECT roles FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    roles = json.loads(user['roles'])
+    
+    subjects = []
+    
+    if 'student' in roles:
+        # Предметы студента
+        cur.execute(
+            """SELECT DISTINCT s.id, s.name, s.code, o.name as org_name
+               FROM user_groups ug
+               JOIN groups g ON ug.group_id = g.id
+               JOIN group_subjects gs ON g.id = gs.group_id
+               JOIN subjects s ON gs.subject_id = s.id
+               JOIN organizations o ON s.organization_id = o.id
+               WHERE ug.user_id = ?
+               ORDER BY s.name""",
+            (user_id,)
+        )
+        subjects = [dict(row) for row in cur.fetchall()]
+    
+    elif 'teacher' in roles:
+        # Предметы преподавателя
+        cur.execute(
+            """SELECT DISTINCT s.id, s.name, s.code, o.name as org_name
+               FROM group_subjects gs
+               JOIN subjects s ON gs.subject_id = s.id
+               JOIN organizations o ON s.organization_id = o.id
+               WHERE gs.teacher_id = ?
+               ORDER BY s.name""",
+            (user_id,)
+        )
+        subjects = [dict(row) for row in cur.fetchall()]
+    
+    return jsonify({"subjects": subjects})
+
+@app.route("/api/telegram/user/<user_id>/quick-stats", methods=["GET", "OPTIONS"])
+def get_telegram_quick_stats(user_id):
+    """Получить быструю статистику пользователя для бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    # Расписание на сегодня
+    cur.execute(
+        """SELECT COUNT(*) as today_lessons
+           FROM user_groups ug
+           JOIN groups g ON ug.group_id = g.id
+           JOIN lessons l ON l.group_id = g.id
+           WHERE ug.user_id = ? AND l.day_of_week = strftime('%w', 'now')""",
+        (user_id,)
+    )
+    today_lessons = cur.fetchone()['today_lessons']
+    
+    # Непроверенные домашние задания
+    cur.execute(
+        """SELECT COUNT(DISTINCT al.id) as pending_homework
+           FROM user_groups ug
+           JOIN groups g ON ug.group_id = g.id
+           JOIN lessons l ON l.group_id = g.id
+           JOIN actual_lessons al ON al.lesson_id = l.id
+           WHERE ug.user_id = ? 
+           AND al.homework IS NOT NULL 
+           AND al.homework != ''
+           AND al.date >= date('now', '-7 days')""",
+        (user_id,)
+    )
+    pending_homework = cur.fetchone()['pending_homework']
+    
+    # Новые оценки за неделю
+    cur.execute(
+        """SELECT COUNT(*) as new_grades
+           FROM marks m
+           JOIN actual_lessons al ON m.actual_lesson_id = al.id
+           WHERE m.student_id = ? 
+           AND m.created_at > ?""",
+        (user_id, int(time.time()) - 7*24*60*60)
+    )
+    new_grades = cur.fetchone()['new_grades']
+    
+    # Новые уведомления
+    cur.execute(
+        "SELECT COUNT(*) as new_notifications FROM notifications WHERE user_id = ? AND is_read = 0",
+        (user_id,)
+    )
+    new_notifications = cur.fetchone()['new_notifications']
+    
+    return jsonify({
+        "today_lessons": today_lessons,
+        "pending_homework": pending_homework,
+        "new_grades": new_grades,
+        "new_notifications": new_notifications,
+        "timestamp": int(time.time())
+    })
+
+# 10. Поиск через бота
+@app.route("/api/telegram/search", methods=["GET", "OPTIONS"])
+def telegram_search():
+    """Поиск через бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    token = request.headers.get("X-Telegram-Token")
+    if not token or not verify_telegram_token(token):
+        return jsonify({"error": "Invalid token"}), 401
+    
+    user_id = request.args.get("user_id")
+    query = request.args.get("q", "").strip()
+    search_type = request.args.get("type", "all")  # all, student, teacher, subject, room
+    
+    if not user_id or not query or len(query) < 2:
+        return jsonify({"error": "Invalid parameters"}), 400
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    results = {
+        "students": [],
+        "teachers": [],
+        "subjects": [],
+        "rooms": []
+    }
+    
+    if search_type in ["all", "student"]:
+        # Поиск студентов (только в своих группах для преподавателей)
+        cur.execute("SELECT roles FROM users WHERE id = ?", (user_id,))
+        user = cur.fetchone()
+        
+        if user and 'teacher' in json.loads(user['roles']):
+            # Преподаватель ищет студентов в своих группах
+            cur.execute(
+                """SELECT DISTINCT u.id, u.username, u.first_name, u.last_name, g.name as group_name
+                   FROM users u
+                   JOIN user_groups ug ON u.id = ug.user_id
+                   JOIN groups g ON ug.group_id = g.id
+                   JOIN group_subjects gs ON g.id = gs.group_id
+                   WHERE gs.teacher_id = ?
+                   AND (u.username LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)
+                   ORDER BY u.last_name, u.first_name
+                   LIMIT 20""",
+                (user_id, f"%{query}%", f"%{query}%", f"%{query}%")
+            )
+        else:
+            # Другие роли не могут искать студентов
+            pass
+        
+        results["students"] = [dict(row) for row in cur.fetchall()]
+    
+    if search_type in ["all", "teacher"]:
+        # Поиск преподавателей
+        cur.execute(
+            """SELECT u.id, u.username, u.first_name, u.last_name
+               FROM users u
+               WHERE u.roles LIKE '%teacher%'
+               AND (u.username LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)
+               ORDER BY u.last_name, u.first_name
+               LIMIT 20""",
+            (f"%{query}%", f"%{query}%", f"%{query}%")
+        )
+        results["teachers"] = [dict(row) for row in cur.fetchall()]
+    
+    if search_type in ["all", "subject"]:
+        # Поиск предметов (только в своих организациях)
+        cur.execute(
+            """SELECT DISTINCT s.id, s.name, s.code, o.name as org_name
+               FROM subjects s
+               JOIN organizations o ON s.organization_id = o.id
+               WHERE o.id IN (
+                   SELECT organization_id FROM organization_members WHERE user_id = ?
+               )
+               AND (s.name LIKE ? OR s.code LIKE ?)
+               ORDER BY s.name
+               LIMIT 20""",
+            (user_id, f"%{query}%", f"%{query}%")
+        )
+        results["subjects"] = [dict(row) for row in cur.fetchall()]
+    
+    if search_type in ["all", "room"]:
+        # Поиск аудиторий (только в своих организациях)
+        cur.execute(
+            """SELECT r.id, r.name, b.name as building_name, o.name as org_name
+               FROM rooms r
+               JOIN buildings b ON r.building_id = b.id
+               JOIN organizations o ON b.organization_id = o.id
+               WHERE o.id IN (
+                   SELECT organization_id FROM organization_members WHERE user_id = ?
+               )
+               AND r.name LIKE ?
+               ORDER BY b.name, r.name
+               LIMIT 20""",
+            (user_id, f"%{query}%")
+        )
+        results["rooms"] = [dict(row) for row in cur.fetchall()]
+    
+    return jsonify(results)
+
+# ============ TELEGRAM BOT CONFIGURATION ============
+
+@app.route("/api/telegram/bot/config", methods=["GET", "POST", "PUT", "OPTIONS"])
+def manage_telegram_bot_config():
+    """Управление конфигурацией телеграм бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    # Только администраторы
+    user_id = get_auth_user()
+    if not user_id:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    db = get_db()
+    cur = db.cursor()
+    
+    # Проверяем, что пользователь - администратор
+    cur.execute("SELECT roles FROM users WHERE id = ?", (user_id,))
+    user = cur.fetchone()
+    if not user or 'admin' not in json.loads(user['roles']):
+        return jsonify({"error": "Admin access required"}), 403
+    
+    if request.method == "GET":
+        cur.execute("SELECT * FROM telegram_bot_config ORDER BY created_at DESC LIMIT 1")
+        config = cur.fetchone()
+        
+        if not config:
+            return jsonify({"error": "Bot not configured"}), 404
+        
+        config_dict = dict(config)
+        config_dict['settings'] = json.loads(config_dict.get('settings', '{}'))
+        
+        # Маскируем токен для безопасности
+        if config_dict.get('bot_token'):
+            token = config_dict['bot_token']
+            if len(token) > 10:
+                config_dict['bot_token'] = token[:4] + "..." + token[-4:]
+        
+        return jsonify(config_dict)
+    
+    elif request.method == "POST":
+        data = request.json
+        bot_token = data.get("bot_token")
+        
+        if not bot_token:
+            return jsonify({"error": "Bot token required"}), 400
+        
+        # Проверяем, существует ли уже конфигурация
+        cur.execute("SELECT id FROM telegram_bot_config")
+        existing = cur.fetchone()
+        
+        if existing:
+            return jsonify({"error": "Bot already configured. Use PUT to update."}), 400
+        
+        # Создаем новую конфигурацию
+        config_id = generate_uuid()
+        cur.execute(
+            """INSERT INTO telegram_bot_config 
+               (id, bot_token, bot_username, webhook_url, owner_id, created_at, settings)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                config_id, 
+                bot_token,
+                data.get("bot_username"),
+                data.get("webhook_url"),
+                user_id,
+                int(time.time()),
+                json.dumps(data.get("settings", {}))
+            )
+        )
+        
+        db.commit()
+        log_audit(user_id, "TELEGRAM_BOT_CONFIGURED", config_id)
+        
+        return jsonify({
+            "success": True,
+            "config_id": config_id,
+            "message": "Bot configured successfully"
+        })
+    
+    else:  # PUT
+        data = request.json
+        
+        cur.execute("SELECT id FROM telegram_bot_config ORDER BY created_at DESC LIMIT 1")
+        existing = cur.fetchone()
+        
+        if not existing:
+            return jsonify({"error": "Bot not configured. Use POST first."}), 404
+        
+        updates = []
+        params = []
+        
+        if 'bot_token' in data:
+            updates.append("bot_token = ?")
+            params.append(data['bot_token'])
+        
+        if 'bot_username' in data:
+            updates.append("bot_username = ?")
+            params.append(data['bot_username'])
+        
+        if 'webhook_url' in data:
+            updates.append("webhook_url = ?")
+            params.append(data['webhook_url'])
+        
+        if 'is_active' in data:
+            updates.append("is_active = ?")
+            params.append(data['is_active'])
+        
+        if 'settings' in data:
+            updates.append("settings = ?")
+            params.append(json.dumps(data['settings']))
+        
+        if updates:
+            updates.append("last_used = ?")
+            params.append(int(time.time()))
+            
+            params.append(existing['id'])
+            
+            sql = f"UPDATE telegram_bot_config SET {', '.join(updates)} WHERE id = ?"
+            cur.execute(sql, params)
+            db.commit()
+        
+        log_audit(user_id, "TELEGRAM_BOT_UPDATED", existing['id'])
+        
+        return jsonify({"success": True, "message": "Bot configuration updated"})
+
+# ============ TELEGRAM WEBHOOK ENDPOINT ============
+
+@app.route("/api/telegram/webhook", methods=["POST", "OPTIONS"])
+def telegram_webhook():
+    """Webhook endpoint для Telegram бота"""
+    if request.method == "OPTIONS":
+        return "", 200
+    
+    # Проверяем секретный токен если нужно
+    # secret_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token")
+    
+    try:
+        update = request.json
+        
+        # Базовый ответ для подтверждения получения
+        # Обработка update будет в отдельном боте
+        
+        return jsonify({"ok": True, "received": True})
+    
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+# ============ TELEGRAM CLEANUP TASK ============
+
+def cleanup_telegram_data():
+    """Очистка старых данных телеграм"""
+    with app.app_context():
+        db = get_db()
+        cur = db.cursor()
+        now = int(time.time())
+        
+        # Удаляем истекшие токены связывания (старше 1 дня)
+        cur.execute(
+            "DELETE FROM telegram_links WHERE link_expires IS NOT NULL AND link_expires < ? AND is_active = 0",
+            (now - 24*60*60,)
+        )
+        
+        # Удаляем истекшие токены доступа (старше 31 дня)
+        cur.execute(
+            "DELETE FROM telegram_tokens WHERE expires_at < ?",
+            (now - 31*24*60*60,)
+        )
+        
+        # Удаляем истекшие QR токены (старше 1 дня)
+        cur.execute(
+            "DELETE FROM qr_attendance_tokens WHERE expires_at < ?",
+            (now - 24*60*60,)
+        )
+        
+        # Очищаем старую статистику (старше 90 дней)
+        cur.execute(
+            "DELETE FROM telegram_statistics WHERE timestamp < ?",
+            (now - 90*24*60*60,)
+        )
+        
+        db.commit()
+
+# Запускаем очистку каждые 24 часа
+# Timer(86400, cleanup_telegram_data).start()
+
+print("✅ Все Telegram эндпоинты добавлены!")
 
 
 # Запускаем проверку просроченных пользователей при старте
