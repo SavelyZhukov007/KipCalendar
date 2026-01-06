@@ -5708,7 +5708,6 @@ def get_student_homework(student_id):
     homework = [dict(row) for row in cur.fetchall()]
     return jsonify({"homework": homework})
 
-
 # ============ SOCKET.IO HANDLERS FOR MESSENGER ============
 
 
