@@ -26,6 +26,9 @@ namespace TeleKipish
                     var configuration = context.Configuration;
                     services.AddSingleton<IConfiguration>(configuration);
 
+                    // Helpers.Config instance
+                    services.AddSingleton<TeleKipish.Helpers.Config>(new TeleKipish.Helpers.Config(configuration));
+
                     // Database
                     services.AddSingleton<DatabaseService>();
 

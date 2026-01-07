@@ -1,12 +1,14 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace TeleKipish.Services
 {
-    internal class AttendanceService
+    public class AttendanceService
     {
+        public Task<bool> VerifyQrToken(string token, string telegramId)
+        {
+            // Stub: real implementation should validate token in DB and mark attendance
+            return Task.FromResult(true);
+        }
     }
 }

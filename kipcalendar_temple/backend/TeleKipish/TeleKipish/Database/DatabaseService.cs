@@ -1,13 +1,14 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 
 namespace TeleKipish.Database
 {
-    internal class DatabaseService
+    public class DatabaseService
     {
+        // Simple initializer stub. Real implementation is out of scope for telegram bot wiring.
+        public Task InitializeDatabaseAsync()
+        {
+            // Ensure any DB setup here. For now just return completed task.
+            return Task.CompletedTask;
+        }
     }
 }
-//34

@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace TeleKipish.Services
 {
-    internal class GradeService
+    public class GradeService
     {
     }
 }

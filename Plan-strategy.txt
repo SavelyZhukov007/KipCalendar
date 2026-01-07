@@ -133,4 +133,4 @@ Use migrations (e.g., Alembic) for schema changes.
 - **Testing:** Unit tests for backend, e2e for frontend.
 - **Deployment:** Docker for backend/frontend, NGINX proxy, Heroku/VPS.
 
-Implement all this step-by-step, ensuring the final product is a complete platform as described.на р
+Implement all this step-by-step, ensuring the final product is a complete platform as described.

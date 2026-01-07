@@ -18,7 +18,6 @@ namespace TeleKipish.Helpers
             _tokenHelper = tokenHelper;
 
             _client = new RestClient(_config.ApiBaseUrl);
-            _client.Timeout = _config.ApiTimeoutSeconds * 1000;
 
             // Add default headers
             _client.AddDefaultHeader("Authorization", $"Bearer {_config.ApiKey}");
@@ -30,7 +29,8 @@ namespace TeleKipish.Helpers
         {
             try
             {
-                var request = new RestRequest(endpoint, Method.GET);
+                var request = new RestRequest(endpoint, Method.Get);
+                request.Timeout = TimeSpan.FromSeconds(_config.ApiTimeoutSeconds); // Set timeout per request
                 if (!string.IsNullOrEmpty(token))
                 {
                     request.AddHeader("X-Telegram-Token", token);
@@ -75,7 +75,7 @@ namespace TeleKipish.Helpers
         {
             try
             {
-                var request = new RestRequest(endpoint, Method.POST);
+                var request = new RestRequest(endpoint, Method.Post);
                 if (!string.IsNullOrEmpty(token))
                 {
                     request.AddHeader("X-Telegram-Token", token);
@@ -125,7 +125,7 @@ namespace TeleKipish.Helpers
         {
             try
             {
-                var request = new RestRequest(endpoint, Method.PUT);
+                var request = new RestRequest(endpoint, Method.Put);
                 if (!string.IsNullOrEmpty(token))
                 {
                     request.AddHeader("X-Telegram-Token", token);
@@ -175,7 +175,7 @@ namespace TeleKipish.Helpers
         {
             try
             {
-                var request = new RestRequest(endpoint, Method.DELETE);
+                var request = new RestRequest(endpoint, Method.Delete);
                 if (!string.IsNullOrEmpty(token))
                 {
                     request.AddHeader("X-Telegram-Token", token);
