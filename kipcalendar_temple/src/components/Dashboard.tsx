@@ -1001,12 +1001,6 @@ const Dashboard: React.FC = () => {
                         height: `${height}px`,
                         left: '5%',
                         width: '90%',
-                        background: isTask
-                          ? `linear-gradient(135deg, #fa8c16 0%, #f5222d ${progress}%)`
-                          : isCompleted
-                            ? 'linear-gradient(135deg, #52c41a 0%, #389e0d 100%)'
-                            : 'linear-gradient(135deg, #722ed1 0%, #531dab 100%)',
-                        zIndex: 1,
                       }}
                       onClick={() => {
                         if (isTask) {
