@@ -173,10 +173,11 @@ const Profile: React.FC = () => {
 
             if (response.ok) {
                 const data = await response.json();
-                setTelegramCode(data.code);
+                setTelegramCode(data.link_code);
                 setTelegramDialogOpen(true);
             } else {
-                setError('Ошибка генерации кода');
+                const errorData = await response.json().catch(() => ({ error: 'Ошибка генерации кода' }));
+                setError(errorData.error || 'Ошибка генерации кода');
             }
         } catch (err) {
             setError('Ошибка сети');

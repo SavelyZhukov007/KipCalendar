@@ -54,7 +54,9 @@ import {
   ExclamationCircleOutlined,
   TeamOutlined,
   LockOutlined,
-  GlobalOutlined
+  GlobalOutlined,
+  ProfileOutlined,
+  SettingOutlined
 } from '@ant-design/icons';
 import {
   format,
@@ -656,7 +658,8 @@ const Dashboard: React.FC = () => {
         body: JSON.stringify(values)
       });
       if (res.ok) {
-        const { url: newUrl } = await res.json();
+        const data = await res.json();
+        const newUrl = data.url || data.event_url;
         setUrl(newUrl);
         setOpenWizard(false);
         refreshEvents();
@@ -665,9 +668,11 @@ const Dashboard: React.FC = () => {
         }
         message.success('План успешно создан');
       } else {
-        message.error('Ошибка создания плана');
+        const errorData = await res.json().catch(() => ({ error: 'Ошибка создания плана' }));
+        message.error(errorData.error || 'Ошибка создания плана');
       }
     } catch (error: any) {
+      console.error('Error creating plan:', error);
       message.error('Ошибка соединения');
     }
   };
@@ -1247,20 +1252,21 @@ const Dashboard: React.FC = () => {
     const onFinish = (values: any) => {
       const data = {
         title: values.title,
-        content: values.content,
+        content: values.content || '',
+        description: values.description || '',
         date: values.startDate.format('YYYY-MM-DD'),
         time: values.startDate.format('HH:mm'),
-        endDate: values.endDate?.format('YYYY-MM-DD') || '',
-        endTime: values.endDate?.format('HH:mm') || '',
+        endDate: values.endDate?.format('YYYY-MM-DD') || null,
+        endTime: values.endDate?.format('HH:mm') || null,
         recurringOptions: recurring ? {
           days: values.days || [],
           reminderType: values.reminderType || 'same',
           reminderTime: values.reminderType === 'same' ? values.sameTime?.format('HH:mm') : values.perDayTimes,
           endRepeat: values.endRepeat?.format('YYYY-MM-DD') || null
         } : null,
-        privacy: values.privacy,
+        privacy: values.privacy || 'public',
         password: values.privacy === 'private' ? values.password : undefined,
-        expirationDays: values.expirationDays
+        expirationDays: values.expirationDays || 0
       };
       handleCreatePlan(data);
     };
@@ -1637,16 +1643,31 @@ const Dashboard: React.FC = () => {
 
   const userMenuItems = [
     {
-      key: 'logout',
-      label: 'Выйти',
-      danger: true,
-      onClick: handleLogout,
+      key: 'profile',
+      label: 'Профиль',
+      icon: <ProfileOutlined />,
+      onClick: () => navigate('/profile'),
+    },
+    {
+      key: 'settings',
+      label: 'Настройки',
+      icon: <SettingOutlined />,
+      onClick: () => navigate('/settings'),
+    },
+    {
+      type: 'divider' as const,
     },
     ...(isDual ? [{
       key: 'switch',
       label: `Переключить на ${otherRole}`,
       onClick: handleSwitchRole,
-    }] : [])
+    }] : []),
+    {
+      key: 'logout',
+      label: 'Выйти',
+      danger: true,
+      onClick: handleLogout,
+    }
   ];
 
   return (

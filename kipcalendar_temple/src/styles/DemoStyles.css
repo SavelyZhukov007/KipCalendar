@@ -780,16 +780,19 @@ body.animate #right {
 @media (max-width: 768px) {
     #container {
         flex-direction: column;
+        min-height: 100vh;
     }
 
     #left,
     #right {
-        flex: 1 0 50%;
-        min-height: 50vh;
+        flex: 1 0 auto;
+        min-height: auto;
+        width: 100%;
     }
 
     #left {
         padding: 1.5rem;
+        min-height: 40vh;
     }
 
     #left h1 {
@@ -802,10 +805,21 @@ body.animate #right {
         height: 150px;
     }
 
+    #right {
+        min-height: 60vh;
+        padding: 1rem;
+    }
+
     #right .form-container {
         width: 95%;
         padding: 2rem 1.5rem;
         max-width: 100%;
+        margin: 0 auto;
+    }
+
+    /* Скрываем вертикальную полоску на мобильных */
+    #container::before {
+        display: none;
     }
 }
 
@@ -815,22 +829,53 @@ body.animate #right {
         --border-radius-lg: 20px;
     }
 
+    #container {
+        padding: 0;
+    }
+
+    #left {
+        padding: 1rem;
+        min-height: 35vh;
+    }
+
     #left h1 {
         font-size: var(--font-size-xl);
+        margin-bottom: 1rem;
+        letter-spacing: -2px;
     }
 
     #left img {
-        width: 120px;
-        height: 120px;
+        width: 100px;
+        height: 100px;
+    }
+
+    #right {
+        padding: 0.5rem;
+        min-height: 65vh;
     }
 
     #right .form-container {
         padding: 1.5rem 1rem;
+        width: 100%;
+        border-radius: 12px;
     }
 
-    #right button {
+    #right button,
+    button {
         padding: 0.75rem 1.5rem;
         font-size: var(--font-size-sm);
+        width: 100%;
+    }
+
+    .form-footer {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .link-row {
+        flex-direction: column;
+        text-align: center;
+        gap: 0.25rem;
     }
 }
 
