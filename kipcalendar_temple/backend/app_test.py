@@ -28,6 +28,10 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
+import pytz
+from tzlocal import get_localzone_name
+from telegram.ext import JobQueue
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Инициализация Flask и расширений
 app = Flask(__name__)
 CORS(
@@ -37,9 +41,7 @@ CORS(
     allow_headers=["Content-Type", "Authorization"],
     supports_credentials=True,
 )
-app.config["MAIL_SERVER"] = (
-    "smtp.gmail.com"  # Пример для Gmail; замените на ваш SMTP-сервер
-)
+app.config["MAIL_SERVER"] = "smtp.gmail.com"
 password = "meqx mjtp zgxi padk"  # Ваш app password для Gmail
 app.config["MAIL_PORT"] = 587  # Или 465 для SSL
 app.config["MAIL_USE_TLS"] = True  # Или MAIL_USE_SSL = True
@@ -49,12 +51,10 @@ app.config["MAIL_DEFAULT_SENDER"] = "savely.zhukov.1583@gmail.com"  # От ко�
 mail = Mail(app)  # Инициализация Flask-Mail
 socketio = SocketIO(app, cors_allowed_origins="*")
 # Telegram Bot Configuration
-BOT_TOKEN = "8203438312:AAEN9v-l6WqatovB6JxHjU2iCzbLn_TikN8" # Токен вашего бота Telegram
+BOT_TOKEN = (
+    "8203438312:AAEN9v-l6WqatovB6JxHjU2iCzbLn_TikN8"  # Токен вашего бота Telegram
+)
 bot = Bot(token=BOT_TOKEN)
-import pytz
-from tzlocal import get_localzone_name
-from telegram.ext import JobQueue
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 tz_str = get_localzone_name()
 timezone = pytz.timezone(tz_str)
 job_queue = JobQueue()
