@@ -1,6 +1,5 @@
 # starting commands
 """
-hi
 kipcalendar_temple/backend/appvenv/Scripts/Activate.ps1
 py kipcalendar_temple/backend/app_test.py
 """
