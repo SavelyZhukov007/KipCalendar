@@ -4,6 +4,8 @@ kipcalendar_temple/backend/appvenv/Scripts/Activate.ps1
 py kipcalendar_temple/backend/app_test.py
 """
 import threading
+import logging
+from logging.handlers import RotatingFileHandler
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import sqlite3
@@ -34,6 +36,44 @@ from telegram.ext import JobQueue
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Инициализация Flask и расширений
 app = Flask(__name__)
+
+# Настройка логирования в файл
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, 'kipcalendar.log')
+
+file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5*1024*1024, backupCount=10, encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+))
+
+logger = logging.getLogger('kipcalendar')
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Также направляем логи Flask в файл
+app.logger.addHandler(file_handler)
+app.logger.setLevel(logging.INFO)
+
+@app.before_request
+def log_request():
+    logger.info(f"REQUEST: {request.method} {request.path} from {request.remote_addr}")
+
+@app.after_request
+def log_response(response):
+    logger.info(f"RESPONSE: {request.method} {request.path} -> {response.status_code}")
+    return response
+
 CORS(
     app,
     origins=["*"],
@@ -8438,4 +8478,5 @@ print("✅ Все Telegram эндпоинты добавлены!")
 # Запускаем проверку просроченных пользователей при старте
 # check_expired_users()
 if __name__ == "__main__":
+    logger.info("🚀 KipCalendar backend запущен на порту 5000")
     socketio.run(app, port=5000, debug=True, host="0.0.0.0")

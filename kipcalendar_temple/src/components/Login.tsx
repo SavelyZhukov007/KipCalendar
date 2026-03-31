@@ -84,21 +84,41 @@ const Login: React.FC = () => {
               Вход
             </Typography>
             <TextField
-              label="Логин"
+              placeholder="Логин"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               fullWidth
               margin="normal"
-              InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+              InputProps={{
+                style: { color: 'var(--text-light)' },
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  '& fieldset': { borderColor: 'rgba(255, 255, 255, 0.3)' },
+                  '&:hover fieldset': { borderColor: 'rgba(255, 255, 255, 0.5)' },
+                  '&.Mui-focused fieldset': { borderColor: 'var(--primary-light)' },
+                },
+                '& input::placeholder': { color: 'rgba(255, 255, 255, 0.7)', opacity: 1 },
+              }}
             />
             <TextField
-              label="Пароль"
+              placeholder="Пароль"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               fullWidth
               margin="normal"
-              InputLabelProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+              InputProps={{
+                style: { color: 'var(--text-light)' },
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  '& fieldset': { borderColor: 'rgba(255, 255, 255, 0.3)' },
+                  '&:hover fieldset': { borderColor: 'rgba(255, 255, 255, 0.5)' },
+                  '&.Mui-focused fieldset': { borderColor: 'var(--primary-light)' },
+                },
+                '& input::placeholder': { color: 'rgba(255, 255, 255, 0.7)', opacity: 1 },
+              }}
             />
             <Button
               onClick={handleLogin}
