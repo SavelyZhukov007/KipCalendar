@@ -766,25 +766,28 @@ def get_telegram_id_from_user(user_id):
 
 def send_pending_notifications():
     while True:
-        db = get_db()
-        cur = db.cursor()
-        cur.execute("SELECT * FROM notifications WHERE sent_to_telegram = 0")
-        notifs = cur.fetchall()
-        for notif in notifs:
-            telegram_id = get_telegram_id_from_user(
-                notif["user_id"]
-            )  # Добавьте функцию
-            if telegram_id:
-                bot.send_message(telegram_id, notif["content"])
-                cur.execute(
-                    "UPDATE notifications SET sent_to_telegram = 1 WHERE id = ?",
-                    (notif["id"],),
-                )
-        db.commit()
-        time.sleep(60)  # Периодически
+        try:
+            with app.app_context():
+                db = get_db()
+                cur = db.cursor()
+                cur.execute("SELECT * FROM notifications WHERE sent_to_telegram = 0")
+                notifs = cur.fetchall()
+                for notif in notifs:
+                    telegram_id = get_telegram_id_from_user(
+                        notif["user_id"]
+                    )
+                    if telegram_id:
+                        bot.send_message(telegram_id, notif["content"])
+                        cur.execute(
+                            "UPDATE notifications SET sent_to_telegram = 1 WHERE id = ?",
+                            (notif["id"],),
+                        )
+                db.commit()
+        except Exception as e:
+            print(f"Notification thread error: {e}")
+        time.sleep(60)
 
-
-threading.Thread(target=send_pending_notifications, daemon=True).start()
+# Thread will be started after get_db is defined (see below)
 
 
 # Обработка обычных сообщений (например, код для связывания)
@@ -797,7 +800,7 @@ def echo(update, context):
         update.message.reply_text("Неизвестная команда. Используй /help.")
 
 
-application.add_handler(MessageHandler(filters.text & ~filters.command, echo))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
 # ============ HELPER FUNCTIONS ============
 
@@ -1219,6 +1222,7 @@ def init_db():
                 content TEXT NOT NULL,
                 timestamp INTEGER DEFAULT (strftime('%s', 'now')),
                 is_read BOOLEAN DEFAULT 0,
+                sent_to_telegram BOOLEAN DEFAULT 0,
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
@@ -1405,10 +1409,18 @@ def init_db():
         except sqlite3.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
+        try:
+            cur.execute("ALTER TABLE notifications ADD COLUMN sent_to_telegram BOOLEAN DEFAULT 0")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
         db.commit()
 
 
 init_db()
+
+# Start notification thread after get_db is defined
+threading.Thread(target=send_pending_notifications, daemon=True).start()
 
 # TELEGRAM telegram Telegram Телеграм телеграм ТЕЛЕГРАМ
 
